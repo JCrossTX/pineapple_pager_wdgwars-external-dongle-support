@@ -153,17 +153,59 @@ class App:
     def _session_dirs(self) -> list[Path]:
         """Every session directory SYNC / SESSIONS should read.
 
-        New rows are written to the active target (``sessions_dir``), but a
-        stick and the internal eMMC can each hold sessions captured while the
-        other was selected — so uploads and the session list span both, and
-        nothing gets stranded when the output device is switched. Deduplicated
-        because with internal output the two collapse to one path.
+        New rows are written to the active target (``sessions_dir``), but loot
+        can live in three places at once: the active target, the internal eMMC,
+        and any USB stick that already carries a ``wdgwars/sessions`` — even
+        when internal is the selected output. SYNC always looks for a USB
+        source, so all three are scanned, deduplicated (with internal output
+        the active dir collapses onto the internal one).
         """
         dirs = [self.sessions_dir]
         internal = self.internal_loot / "sessions"
         if internal not in dirs:
             dirs.append(internal)
+        for sdir in self._mounted_usb_session_dirs():
+            if sdir not in dirs:
+                dirs.append(sdir)
         return dirs
+
+    def _mounted_usb_session_dirs(self) -> list[Path]:
+        """`sessions/` dirs on every currently-mounted USB stick that has one.
+
+        Read-only and cheap (parses /proc); does not mount anything. Handshake
+        pcaps live in a sibling `handshakes/` dir and are deliberately not
+        returned — SYNC and ERASE SYNCED only ever see session CSVs.
+        """
+        out: list[Path] = []
+        try:
+            for part in usbdrive.list_usb_partitions():
+                if part.mountpoint:
+                    sdir = usbdrive.loot_dir_for(part.mountpoint) / "sessions"
+                    if sdir.is_dir():
+                        out.append(sdir)
+        except Exception:
+            pass
+        return out
+
+    def _mount_usb_for_read(self) -> None:
+        """Best-effort: bring a USB stick online so SYNC/SESSIONS can see its
+        sessions even when internal is the selected output. Never changes the
+        active output target, and no-ops when a stick is already mounted."""
+        try:
+            parts = usbdrive.list_usb_partitions()
+            if any(p.is_mounted for p in parts):
+                return
+            store = self.cfg.get("storage", {})
+            device = store.get("usb_device") or (parts[0].device if parts else None)
+            if device:
+                usbdrive.ensure_mounted(
+                    device, store.get("usb_mount", usbdrive.DEFAULT_MOUNT))
+        except Exception:
+            pass
+
+    def _synced_sessions(self) -> list[Path]:
+        """Session CSVs marked `.uploaded` (successfully synced), all dirs."""
+        return [p for p, st in self._all_sessions() if st == "ok"]
 
     def _all_pending(self) -> list[Path]:
         """Pending CSVs across all session dirs, oldest-first globally."""
@@ -541,9 +583,10 @@ class App:
                          "No API key configured.\nGo to CONFIG.", accent=self.pal.red)
             return
 
-        # Upload pending CSVs from every session dir — internal eMMC and, when
-        # USB output is selected, the stick as well — so sessions captured
-        # under either target are all synced.
+        # Always look for a USB source, even when internal is selected — then
+        # upload pending CSVs from every session dir (internal eMMC + any USB
+        # stick) so nothing is stranded on storage that isn't currently active.
+        self._mount_usb_for_read()
         pending = self._all_pending()
         if not pending:
             dialog.alert(self.p, self.pal, "SYNC",
@@ -700,6 +743,7 @@ class App:
         dialog.alert(self.p, self.pal, "UPLOAD", "\n".join(lines), accent=accent)
 
     def _action_sessions(self):
+        self._mount_usb_for_read()
         rows = self._all_sessions()
         if not rows:
             dialog.alert(self.p, self.pal, "SESSIONS",
@@ -792,9 +836,63 @@ class App:
                     part.name,
                     action=lambda d=part.device: self._set_output("usb", d),
                     badge=("* " + mount_tag) if sel else mount_tag))
+            n_synced = len(self._synced_sessions())
+            items.append(menu.MenuItem("ERASE SYNCED",
+                          action=lambda: self._cfg_erase_synced(),
+                          badge=str(n_synced) if n_synced else None))
             items.append(menu.MenuItem("BACK", action=lambda: "back"))
             return items
         menu.run(self.p, self.pal, "OUTPUT DEVICE", build)
+
+    def _cfg_erase_synced(self):
+        """Delete session CSVs that were successfully synced (carry a
+        ``.uploaded`` marker), across internal and USB, to free space. Handshake
+        pcaps live in a separate `handshakes/` dir and are never touched."""
+        self._mount_usb_for_read()
+        synced = self._synced_sessions()
+        if not synced:
+            dialog.alert(self.p, self.pal, "ERASE SYNCED",
+                         "No synced sessions\nto erase.", accent=self.pal.cyan)
+            return
+        total_kb = 0
+        for p in synced:
+            try:
+                total_kb += p.stat().st_size // 1024
+            except OSError:
+                pass
+        if not dialog.confirm(self.p, self.pal, "ERASE SYNCED",
+                              f"Delete {len(synced)} synced\n"
+                              f"sessions ({total_kb} KB)?\n\n"
+                              f"Handshake pcaps kept."):
+            return
+        removed, freed = self._erase_sessions(synced)
+        dialog.alert(self.p, self.pal, "ERASE SYNCED",
+                     f"Erased {removed} sessions.\nFreed {freed // 1024} KB.",
+                     accent=self.pal.green)
+        return "back"
+
+    @staticmethod
+    def _erase_sessions(csvs: list[Path]) -> tuple[int, int]:
+        """Delete each session CSV and its own `.uploaded` / `.error` markers.
+
+        Returns ``(files_removed_count, bytes_freed)``. Only the named CSVs and
+        their sibling markers are removed — no directory is walked, so handshake
+        pcaps (in a separate `handshakes/` dir) can never be caught up in it.
+        """
+        removed = 0
+        freed = 0
+        for csv in csvs:
+            for target in (csv,
+                           csv.with_suffix(csv.suffix + ".uploaded"),
+                           csv.with_suffix(csv.suffix + ".error")):
+                try:
+                    if target.exists():
+                        freed += target.stat().st_size
+                        target.unlink()
+                except OSError:
+                    pass
+            removed += 1
+        return removed, freed
 
     def _set_output(self, target: str, device: str | None):
         store = self.cfg.setdefault("storage", {})

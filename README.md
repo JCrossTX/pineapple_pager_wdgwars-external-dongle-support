@@ -156,6 +156,8 @@ MAIN MENU
   │    │    ├── REFRESH TTL +/-  // slow re-log even when standing still
   │    │    └── REQUIRE GPS FIX  // refuse to write rows without a fix
   │    ├── OUTPUT DEVICE    // internal eMMC or a USB stick on the hub
+  │    │    ├── INTERNAL / USB AUTO / sdX1 ...  // where new loot is written
+  │    │    └── ERASE SYNCED  // delete synced session CSVs (pcaps kept)
   │    ├── BRIGHTNESS +/-   // 70% default, stays on position
   │    ├── IDLE TIMEOUT +/- // 20 s default, 5-600 s
   │    ├── DIM LEVEL +/-    // 10% default (hardware off-floor)
@@ -265,12 +267,22 @@ configured but cannot be mounted or written, WDGoWars falls back to internal
 storage rather than blocking the scan, and the CONFIG badge shows where loot is
 really landing.
 
-**SYNC NOW** and **SESSIONS** read from *both* the internal eMMC and the
-selected USB stick, so sessions captured under either target are uploaded and
-listed together — switching the output device never strands earlier sessions on
-the storage you're no longer writing to. Upload markers (`.uploaded` /
-`.error`) are written next to each CSV wherever it lives, so a stick keeps its
-own sync state.
+**SYNC NOW** and **SESSIONS** always look for a USB source — even when
+*internal* is the selected output — and read from *both* the internal eMMC and
+any mounted USB stick that carries a `wdgwars/sessions/`. So sessions captured
+under either target are uploaded and listed together, and switching the output
+device never strands earlier sessions on the storage you're no longer writing
+to. If a stick is present but unmounted, SYNC mounts it first. Upload markers
+(`.uploaded` / `.error`) are written next to each CSV wherever it lives, so a
+stick keeps its own sync state.
+
+**ERASE SYNCED** (under OUTPUT DEVICE) frees space by deleting the session CSVs
+that were **successfully uploaded** — those carrying a `.uploaded` marker —
+across both internal and USB, after a confirmation showing how many and how
+much. Pending and errored sessions are left alone. **Handshake pcaps live in a
+separate `handshakes/` directory and are never uploaded or erased by this** —
+they are yours to manage (copy off the stick, delete manually) independently of
+the WigleWifi session sync.
 
 ```json
 "storage": {
