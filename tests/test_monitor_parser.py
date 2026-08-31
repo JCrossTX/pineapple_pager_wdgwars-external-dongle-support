@@ -394,6 +394,30 @@ class TestHopPlan(unittest.TestCase):
         sc._supported_freqs = lambda: set()
         self.assertIn(5955, sc._build_hop_plan())
 
+    def test_2g_6g_plan_skips_5ghz(self):
+        sc = MonitorScanner("wlan9mon", bands=["2g", "6g_psc"])
+        sc._supported_freqs = lambda: set()
+        plan = set(sc._build_hop_plan())
+        self.assertIn(2412, plan)
+        self.assertIn(5955, plan)
+        self.assertNotIn(5180, plan)
+
+    def test_5g_6g_plan_skips_24ghz(self):
+        sc = MonitorScanner("wlan9mon", bands=["5g_fast", "5g_dfs", "6g_psc"])
+        sc._supported_freqs = lambda: set()
+        plan = set(sc._build_hop_plan())
+        self.assertIn(5180, plan)
+        self.assertIn(5955, plan)
+        self.assertNotIn(2412, plan)
+
+    def test_6_only_plan_hops_just_6ghz(self):
+        sc = MonitorScanner("wlan9mon", bands=["6g_psc"])
+        sc._supported_freqs = lambda: set()
+        plan = set(sc._build_hop_plan())
+        self.assertIn(5955, plan)
+        self.assertNotIn(2412, plan)
+        self.assertNotIn(5180, plan)
+
 
 class TestHelpers(unittest.TestCase):
     def test_decode_ssid_empty(self):

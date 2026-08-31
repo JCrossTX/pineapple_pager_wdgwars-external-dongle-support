@@ -165,7 +165,7 @@ MAIN MENU
   │    ├── TEST CONNECTION  // GET /api/me, shows user/wifi/ble/gang
   │    ├── SCAN SETUP
   │    │    ├── WIFI SOURCE      // auto / force monitor / force iw / pick iface
-  │    │    ├── BAND PLAN        // rotate / 2.4 only / 2.4+5 / 2.4+5+6 / full sweep
+  │    │    ├── BAND PLAN        // rotate / 2.4 / 2.4+5 / 2.4+6 / 2.4+5+6 / 5+6 / 6 only / full sweep
   │    │    ├── MONITOR HOP      // let us hop channels, or leave it to a
   │    │    │                    // setup payload that already does
   │    │    ├── HANDSHAKE CAP    // passive EAPOL/handshake capture to pcap
