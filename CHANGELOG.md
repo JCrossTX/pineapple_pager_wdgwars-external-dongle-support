@@ -22,10 +22,10 @@ hub, plus opt-in passive handshake capture.
   never strands earlier sessions on the other storage.
   `bootstrap.sh` installs `kmod-usb-storage`, `block-mount`, `kmod-fs-vfat`,
   `kmod-fs-exfat` and `dosfstools`.
-- **ERASE SYNCED** (CONFIG → OUTPUT DEVICE). Deletes the session CSVs that were
-  successfully uploaded (carry a `.uploaded` marker) across internal and USB,
-  after a confirmation. Pending/errored sessions and the handshake pcaps
-  (separate `handshakes/` dir) are never touched.
+- **ERASE SYNCED** (main menu, right after SYNC NOW). Deletes the session CSVs
+  that were successfully uploaded (carry a `.uploaded` marker) across internal
+  and USB, after a confirmation; badge shows the count. Pending/errored sessions
+  and the handshake pcaps (separate `handshakes/` dir) are never touched.
 - **Passive handshake capture** (`scanners/handshake.py`, **CONFIG → SCAN SETUP
   → HANDSHAKE CAP**). Off by default. Records WPA EAPOL 4-way-handshake frames
   (plus optional beacons for SSID context) to a tool-compatible pcap at

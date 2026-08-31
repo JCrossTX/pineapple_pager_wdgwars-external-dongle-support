@@ -139,6 +139,7 @@ MAIN MENU
   │                  A=pause  B=end  ↑↓=brightness
   │
   ├── SYNC NOW       // multipart upload, NEW BADGE flash
+  ├── ERASE SYNCED   // delete uploaded session CSVs (pcaps kept)
   ├── SESSIONS       // list files with v / ^ / x icons
   ├── UPLOAD LOG     // GET /api/upload-history — server-side import counts
   ├── CONFIG
@@ -156,8 +157,7 @@ MAIN MENU
   │    │    ├── REFRESH TTL +/-  // slow re-log even when standing still
   │    │    └── REQUIRE GPS FIX  // refuse to write rows without a fix
   │    ├── OUTPUT DEVICE    // internal eMMC or a USB stick on the hub
-  │    │    ├── INTERNAL / USB AUTO / sdX1 ...  // where new loot is written
-  │    │    └── ERASE SYNCED  // delete synced session CSVs (pcaps kept)
+  │    │    └── INTERNAL / USB AUTO / sdX1 ...  // where new loot is written
   │    ├── BRIGHTNESS +/-   // 70% default, stays on position
   │    ├── IDLE TIMEOUT +/- // 20 s default, 5-600 s
   │    ├── DIM LEVEL +/-    // 10% default (hardware off-floor)
@@ -276,13 +276,14 @@ to. If a stick is present but unmounted, SYNC mounts it first. Upload markers
 (`.uploaded` / `.error`) are written next to each CSV wherever it lives, so a
 stick keeps its own sync state.
 
-**ERASE SYNCED** (under OUTPUT DEVICE) frees space by deleting the session CSVs
-that were **successfully uploaded** — those carrying a `.uploaded` marker —
-across both internal and USB, after a confirmation showing how many and how
-much. Pending and errored sessions are left alone. **Handshake pcaps live in a
-separate `handshakes/` directory and are never uploaded or erased by this** —
-they are yours to manage (copy off the stick, delete manually) independently of
-the WigleWifi session sync.
+**ERASE SYNCED** (main menu, right after SYNC NOW) frees space by deleting the
+session CSVs that were **successfully uploaded** — those carrying a `.uploaded`
+marker — across both internal and USB, after a confirmation showing how many
+and how much. Its badge shows the count that would be removed. Pending and
+errored sessions are left alone. **Handshake pcaps live in a separate
+`handshakes/` directory and are never uploaded or erased by this** — they are
+yours to manage (copy off the stick, delete manually) independently of the
+WigleWifi session sync.
 
 ```json
 "storage": {

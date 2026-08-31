@@ -246,8 +246,13 @@ class App:
 
     def _main_menu(self):
         def build():
-            pending = len(self._all_pending())
-            all_count = len(self._all_sessions())
+            # One scan feeds all three badges. "pending" mirrors list_pending
+            # (anything not uploaded — includes .error, which SYNC retries);
+            # "synced" is what ERASE SYNCED would remove.
+            sessions = self._all_sessions()
+            all_count = len(sessions)
+            pending = sum(1 for _, st in sessions if st != "ok")
+            synced = sum(1 for _, st in sessions if st == "ok")
             peers = handoff.discover(_HERE)
             items = [
                 menu.MenuItem("WARDRIVE BOTH",
@@ -258,6 +263,8 @@ class App:
                               action=lambda: self._action_scan(wifi=False, ble=True)),
                 menu.MenuItem("SYNC NOW", action=lambda: self._action_sync(),
                               badge=f"Q:{pending}" if pending else None),
+                menu.MenuItem("ERASE SYNCED", action=lambda: self._action_erase_synced(),
+                              badge=str(synced) if synced else None),
                 menu.MenuItem("SESSIONS", action=lambda: self._action_sessions(),
                               badge=str(all_count) if all_count else None),
                 menu.MenuItem("UPLOAD LOG", action=lambda: self._action_history()),
@@ -836,15 +843,11 @@ class App:
                     part.name,
                     action=lambda d=part.device: self._set_output("usb", d),
                     badge=("* " + mount_tag) if sel else mount_tag))
-            n_synced = len(self._synced_sessions())
-            items.append(menu.MenuItem("ERASE SYNCED",
-                          action=lambda: self._cfg_erase_synced(),
-                          badge=str(n_synced) if n_synced else None))
             items.append(menu.MenuItem("BACK", action=lambda: "back"))
             return items
         menu.run(self.p, self.pal, "OUTPUT DEVICE", build)
 
-    def _cfg_erase_synced(self):
+    def _action_erase_synced(self):
         """Delete session CSVs that were successfully synced (carry a
         ``.uploaded`` marker), across internal and USB, to free space. Handshake
         pcaps live in a separate `handshakes/` dir and are never touched."""
@@ -869,7 +872,8 @@ class App:
         dialog.alert(self.p, self.pal, "ERASE SYNCED",
                      f"Erased {removed} sessions.\nFreed {freed // 1024} KB.",
                      accent=self.pal.green)
-        return "back"
+        # None keeps us on the main menu, which rebuilds with the badge cleared.
+        return None
 
     @staticmethod
     def _erase_sessions(csvs: list[Path]) -> tuple[int, int]:
