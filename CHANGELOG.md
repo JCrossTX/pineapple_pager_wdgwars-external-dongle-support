@@ -26,6 +26,15 @@ hub, plus opt-in passive handshake capture.
   that were successfully uploaded (carry a `.uploaded` marker) across internal
   and USB, after a confirmation; badge shows the count. Pending/errored sessions
   and the handshake pcaps (separate `handshakes/` dir) are never touched.
+- **More band-plan presets** — `2.4 + 6`, `2.4 + 5 + 6`, `5 + 6` and `6 only`,
+  alongside the existing `rotate` / `2.4 only` / `2.4 + 5` / `full sweep`, for
+  every useful combination of the 2.4 / 5 / 6 GHz bands.
+- **BAND PLAN now steers the monitor hopper too** — the same `scan.band_plan`
+  keys drive both the `iw scan` rotation and the monitor-mode channel hopper,
+  so 6 GHz (6E) PSC channels are hopped whenever the plan includes them (the
+  default plan does), and a restrictive plan like `2.4 only` or `6 only` limits
+  monitor mode as well. Still intersected with the radio's supported/enabled
+  frequencies.
 - **Passive handshake capture** (`scanners/handshake.py`, **CONFIG → SCAN SETUP
   → HANDSHAKE CAP**). Off by default. Records WPA EAPOL 4-way-handshake frames
   (plus optional beacons for SSID context) to a tool-compatible pcap at

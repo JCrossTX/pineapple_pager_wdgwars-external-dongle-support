@@ -282,13 +282,18 @@ class MonitorScanner:
     def __init__(self, iface: str = "wlan1mon", hop: bool = True,
                  dwell_ms: int = 250, emit_interval_s: float = 1.0,
                  snaplen: int = 512, queue_max: int = 256,
-                 ie_refresh_s: float = 120.0) -> None:
+                 ie_refresh_s: float = 120.0,
+                 bands: list[str] | None = None) -> None:
         self.iface = iface
         self.hop = hop
         self.dwell_s = max(0.05, dwell_ms / 1000.0)
         self.emit_interval_s = emit_interval_s
         self.snaplen = snaplen
         self.ie_refresh_s = ie_refresh_s
+        # Which bands to hop, taken from the same `scan.band_plan` keys the
+        # iw-scan backend uses, so BAND PLAN steers both backends the same way.
+        # None/empty means all bands (2.4 + 5 + 6). See `_selected_groups`.
+        self.bands = list(bands) if bands else None
 
         self._q: queue.Queue[list[WifiObs]] = queue.Queue(maxsize=queue_max)
         self._stop = threading.Event()
@@ -403,10 +408,31 @@ class MonitorScanner:
                 out.add(int(m.group(1)))
         return out
 
+    def _selected_groups(self) -> list[list[int]]:
+        """Frequency groups to hop, from the `scan.band_plan` band keys.
+
+        Maps the plan keys (`2g`, `5g_fast`, `5g_dfs`, `6g_psc`, `all`) to the
+        hopper's 2.4 / 5 / 6 GHz groups. None/empty or `all` means every band,
+        so 6 GHz (6E) is covered whenever the plan asks for it — the default
+        plan includes `6g_psc`. The supported-frequency intersection below then
+        drops any band the radio/regdomain reports as disabled.
+        """
+        if not self.bands or "all" in self.bands:
+            return [HOP_2G, HOP_5G, HOP_6G]
+        keys = set(self.bands)
+        groups: list[list[int]] = []
+        if "2g" in keys:
+            groups.append(HOP_2G)
+        if keys & {"5g_fast", "5g_dfs", "5g"}:
+            groups.append(HOP_5G)
+        if keys & {"6g_psc", "6g"}:
+            groups.append(HOP_6G)
+        return groups or [HOP_2G, HOP_5G, HOP_6G]
+
     def _build_hop_plan(self) -> list[int]:
         supported = self._supported_freqs()
         plan: list[int] = []
-        for group in (HOP_2G, HOP_5G, HOP_6G):
+        for group in self._selected_groups():
             for f in group:
                 if not supported or f in supported:
                     plan.append(f)
