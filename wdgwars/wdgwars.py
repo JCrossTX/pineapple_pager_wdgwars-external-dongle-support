@@ -364,6 +364,9 @@ class App:
                 hop=bool(scan_cfg.get("monitor_hop", True)),
                 dwell_ms=int(scan_cfg.get("monitor_dwell_ms", 250)),
                 emit_interval_s=float(scan_cfg.get("emit_interval_s", 1.0)),
+                # Same BAND PLAN keys drive the hopper, so 6 GHz (6E) is hopped
+                # when the plan asks for it — the default plan includes 6g_psc.
+                bands=scan_cfg.get("band_plan") or DEFAULT_PLAN,
             )
             scanner.start()
             if scanner.available:

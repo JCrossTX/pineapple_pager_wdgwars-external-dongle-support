@@ -196,6 +196,16 @@ the file is actually growing at, in rows/min.
 | Sees | every beacon (~10/s per AP) | one snapshot per pass |
 | Position samples | continuous | one per band pass (~2 s) |
 | Channel coverage | hops itself (or leave it to a setup payload) | rotating band passes |
+| Bands | follows **BAND PLAN** | follows **BAND PLAN** |
+
+**BAND PLAN drives both backends.** The `scan.band_plan` you pick under
+**SCAN SETUP → BAND PLAN** now steers the monitor-mode hopper as well as the
+`iw scan` rotation, so the two stay consistent: choose **2.4 + 5 + 6** (or the
+default **rotate**, which includes a 6 GHz PSC pass) and monitor mode hops the
+6 GHz (6E) PSC channels too, while **2.4 only** keeps it on 2.4 GHz. Either way
+the plan is intersected with what the radio actually supports, so a band the
+driver/regdomain reports as `disabled` (commonly 6 GHz on a `world` regdomain)
+is dropped rather than wasting a hop.
 
 ### Measured on the device
 
