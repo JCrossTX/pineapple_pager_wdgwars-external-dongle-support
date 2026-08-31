@@ -916,6 +916,7 @@ class App:
         ("rotate", DEFAULT_PLAN),
         ("2.4 only", ["2g"]),
         ("2.4 + 5", ["2g", "5g_fast", "2g", "5g_dfs"]),
+        ("2.4 + 5 + 6", ["2g", "5g_fast", "2g", "5g_dfs", "2g", "6g_psc"]),
         ("full sweep", ["all"]),
     ]
 

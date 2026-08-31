@@ -165,7 +165,7 @@ MAIN MENU
   │    ├── TEST CONNECTION  // GET /api/me, shows user/wifi/ble/gang
   │    ├── SCAN SETUP
   │    │    ├── WIFI SOURCE      // auto / force monitor / force iw / pick iface
-  │    │    ├── BAND PLAN        // rotate / 2.4 only / 2.4+5 / full sweep
+  │    │    ├── BAND PLAN        // rotate / 2.4 only / 2.4+5 / 2.4+5+6 / full sweep
   │    │    ├── MONITOR HOP      // let us hop channels, or leave it to a
   │    │    │                    // setup payload that already does
   │    │    ├── HANDSHAKE CAP    // passive EAPOL/handshake capture to pcap
@@ -484,35 +484,6 @@ bit 4 is set, which had every WEP network classified as open.
 `wdgwars.py` needs `pagerctl`, which only exists on the device;
 `tests/test_app_smoke.py` stubs it so import errors and menu-wiring typos are
 caught off-device too.
-
-## Building a release
-
-`build_release.sh` packages a clean, deploy-ready bundle of the payload:
-
-```sh
-sh build_release.sh            # version from payload.sh + git short SHA
-sh build_release.sh 1.2.0      # or pin an explicit version
-```
-
-It byte-compiles every module first as a release gate, strips dev scratch,
-runtime state and any secret (the bundled `config.json` is template-only, with
-an empty `api_key`), normalises shell scripts to LF, and writes to `dist/`
-(gitignored):
-
-```
-dist/wdgwars-<version>.tar.gz          # release archive (payload + README + CHANGELOG)
-dist/wdgwars-<version>.zip             # same, for Windows (if `zip` is present)
-dist/wdgwars-<version>.tar.gz.sha256   # checksum
-```
-
-Deploy a release the same way as a clone — unpack and copy the inner
-`wdgwars/` folder onto the pager, then run `bootstrap.sh`:
-
-```sh
-tar xzf wdgwars-<version>.tar.gz
-scp -r wdgwars-<version>/wdgwars root@172.16.52.1:/mmc/root/payloads/user/reconnaissance/wdgwars
-ssh root@172.16.52.1 'cd /mmc/root/payloads/user/reconnaissance/wdgwars && sh bootstrap.sh'
-```
 
 ## Non-goals
 
