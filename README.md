@@ -16,6 +16,12 @@ that turns it into an offline-first **WiFi + BLE wardriver** feeding the
 - **Two WiFi capture backends** — passive monitor-mode beacon capture when a
   monitor interface is available, `iw dev … scan` with rotating per-band
   passes otherwise. The interface is configurable and auto-detected.
+- **External WiFi dongle** — an Alfa **AWUS036AXM** (MediaTek MT7921AU) staged on
+  a powered hub is auto-selected in monitor mode; its tri-band radio sees 6 GHz
+  networks the pager's own 2.4 GHz-only `phy0` cannot
+- **Passive handshake capture** (opt-in, off by default) — records WPA EAPOL
+  4-way handshakes to a standard pcap while wardriving; strictly passive, no
+  deauth / injection / association
 - BLE LE capture via `bluetoothctl` under a pty (real async `[CHG] RSSI` events)
 - GPS from a **u-blox 7** USB stick via `gpsd` — 3D fix required before scan starts,
   and every observation is geo-tagged with the position that was true **when it
@@ -24,8 +30,13 @@ that turns it into an offline-first **WiFi + BLE wardriver** feeding the
   you have moved far enough for the sighting to add information, or when the
   signal got materially stronger
 - Stores everything as standard **WigleWifi-1.6** CSV in `/mmc/root/loot/wdgwars/sessions/`
+- **USB storage output** — send sessions (and handshake pcaps) to a USB stick on
+  the hub via **OUTPUT DEVICE**, or keep them on internal eMMC
 - Manual **SYNC NOW** uploads pending CSVs to `POST /api/upload-csv`, automatically
-  switching to the async `POST /api/v2/upload-csv` queue (gzipped) for large files
+  switching to the async `POST /api/v2/upload-csv` queue (gzipped) for large files —
+  always looking for a USB source, so internal + USB sessions upload together
+- **ERASE SYNCED** frees space by deleting session CSVs that were already uploaded
+  (handshake pcaps are never touched)
 - **UPLOAD LOG** screen reads `GET /api/upload-history` — see the server's own
   `imported` / `captured` / `no_gps` / `bad_rows` counts on the device
 - "NEW BADGE" flash after sync, including the 🍍 `hak5_pager_user` *Hak5 Pager Op*
@@ -38,7 +49,7 @@ that turns it into an offline-first **WiFi + BLE wardriver** feeding the
 wdgwars/
 ├── payload.sh          # pager manifest + launcher (RINGTONE/LOG/WAIT_FOR_INPUT)
 ├── bootstrap.sh        # one-time: fetches pagerctl from wifman, opkg deps
-├── config.json         # api_key, gps, scan/dedup tuning, upload mode, idle settings
+├── config.json         # api_key, gps, scan/dedup, upload, storage/USB output, handshake, idle
 ├── handoff.py          # APP_HANDOFF launcher discovery / exit(42) trigger
 ├── wdgwars.py          # entry point + menu loop (App class)
 ├── launch_*.sh         # jump-to launchers for the 4 peer payloads
@@ -61,6 +72,12 @@ wdgwars/
 > `scan.refresh_ttl_s` because its meaning changed, and `tcpdump-mini` is a
 > new optional dependency for the monitor-mode backend. See
 > [CHANGELOG.md](CHANGELOG.md).
+
+> **This fork** adds external WiFi dongle, USB storage output and passive
+> handshake capture. Re-run `sh bootstrap.sh` after updating to pull the new
+> `opkg` packages (MT7921AU dongle firmware + USB-storage kmods). Nothing else
+> changes if you don't use them: output stays on internal eMMC and handshake
+> capture is off by default. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Install on the pager
 
