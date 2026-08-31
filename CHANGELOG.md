@@ -17,6 +17,8 @@ hub, plus opt-in passive handshake capture.
   `/dev/mmcblk*`), mounts a chosen one under `/mnt/wdgwars-usb`, and writes
   sessions + handshake pcaps to `<mount>/wdgwars/`. Falls back to internal
   storage if the stick can't be mounted/written, so a scan is never blocked.
+  **SYNC NOW** and **SESSIONS** span both internal and USB, so switching the
+  output device never strands earlier sessions on the other storage.
   `bootstrap.sh` installs `kmod-usb-storage`, `block-mount`, `kmod-fs-vfat`,
   `kmod-fs-exfat` and `dosfstools`.
 - **Passive handshake capture** (`scanners/handshake.py`, **CONFIG → SCAN SETUP

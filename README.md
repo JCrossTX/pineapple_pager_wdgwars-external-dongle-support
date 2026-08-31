@@ -260,12 +260,17 @@ stick shows up as `/dev/sd*`, telling it apart from the internal
 - **`sdX1`, …** — pin a specific partition.
 
 The chosen target is mounted under `/mnt/wdgwars-usb` (configurable via
-`storage.usb_mount`) and loot goes to `<mount>/wdgwars/`. If a USB target is
+`storage.usb_mount`) and new loot goes to `<mount>/wdgwars/`. If a USB target is
 configured but cannot be mounted or written, WDGoWars falls back to internal
 storage rather than blocking the scan, and the CONFIG badge shows where loot is
-really landing. Selecting a target also determines where the **SESSIONS** and
-**SYNC NOW** screens read from, so a stick can carry a whole drive's loot off
-the device.
+really landing.
+
+**SYNC NOW** and **SESSIONS** read from *both* the internal eMMC and the
+selected USB stick, so sessions captured under either target are uploaded and
+listed together — switching the output device never strands earlier sessions on
+the storage you're no longer writing to. Upload markers (`.uploaded` /
+`.error`) are written next to each CSV wherever it lives, so a stick keeps its
+own sync state.
 
 ```json
 "storage": {

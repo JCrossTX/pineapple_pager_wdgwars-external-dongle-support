@@ -150,6 +150,42 @@ class App:
     def handshakes_dir(self) -> Path:
         return self.loot_dir / "handshakes"
 
+    def _session_dirs(self) -> list[Path]:
+        """Every session directory SYNC / SESSIONS should read.
+
+        New rows are written to the active target (``sessions_dir``), but a
+        stick and the internal eMMC can each hold sessions captured while the
+        other was selected — so uploads and the session list span both, and
+        nothing gets stranded when the output device is switched. Deduplicated
+        because with internal output the two collapse to one path.
+        """
+        dirs = [self.sessions_dir]
+        internal = self.internal_loot / "sessions"
+        if internal not in dirs:
+            dirs.append(internal)
+        return dirs
+
+    def _all_pending(self) -> list[Path]:
+        """Pending CSVs across all session dirs, oldest-first globally."""
+        found: dict[str, Path] = {}
+        for d in self._session_dirs():
+            for p in list_pending(d):
+                found[str(p)] = p
+        return sorted(found.values(), key=_safe_mtime)
+
+    def _all_sessions(self) -> list[tuple[Path, str]]:
+        """(path, status) across all session dirs, newest-first globally."""
+        seen: set[str] = set()
+        rows: list[tuple[Path, str]] = []
+        for d in self._session_dirs():
+            for p, st in list_all(d):
+                if str(p) in seen:
+                    continue
+                seen.add(str(p))
+                rows.append((p, st))
+        rows.sort(key=lambda r: _safe_mtime(r[0]), reverse=True)
+        return rows
+
     def run(self) -> str | None:
         """Returns None on normal exit, handoff.HANDOFF_SENTINEL if the user
         picked a JUMP TO target — main() translates that to `return 42`."""
@@ -168,8 +204,8 @@ class App:
 
     def _main_menu(self):
         def build():
-            pending = len(list_pending(self.sessions_dir))
-            all_count = len(list_all(self.sessions_dir))
+            pending = len(self._all_pending())
+            all_count = len(self._all_sessions())
             peers = handoff.discover(_HERE)
             items = [
                 menu.MenuItem("WARDRIVE BOTH",
@@ -505,7 +541,10 @@ class App:
                          "No API key configured.\nGo to CONFIG.", accent=self.pal.red)
             return
 
-        pending = list_pending(self.sessions_dir)
+        # Upload pending CSVs from every session dir — internal eMMC and, when
+        # USB output is selected, the stick as well — so sessions captured
+        # under either target are all synced.
+        pending = self._all_pending()
         if not pending:
             dialog.alert(self.p, self.pal, "SYNC",
                          "Queue is empty.\nNothing to upload.", accent=self.pal.cyan)
@@ -661,7 +700,7 @@ class App:
         dialog.alert(self.p, self.pal, "UPLOAD", "\n".join(lines), accent=accent)
 
     def _action_sessions(self):
-        rows = list_all(self.sessions_dir)
+        rows = self._all_sessions()
         if not rows:
             dialog.alert(self.p, self.pal, "SESSIONS",
                          "No sessions yet.\nStart a scan first.")
@@ -997,6 +1036,14 @@ class App:
                           "Quit WDGoWars Wardriver?"):
             return "exit"
         return None
+
+
+def _safe_mtime(path: Path) -> float:
+    """Modification time, or 0.0 if the file vanished between listing and sort."""
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
 
 
 def _rows_per_min(hist) -> float:
