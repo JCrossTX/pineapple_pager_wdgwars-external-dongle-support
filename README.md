@@ -16,9 +16,9 @@ that turns it into an offline-first **WiFi + BLE wardriver** feeding the
 - **Two WiFi capture backends** — passive monitor-mode beacon capture when a
   monitor interface is available, `iw dev … scan` with rotating per-band
   passes otherwise. The interface is configurable and auto-detected.
-- **External WiFi dongle** — an Alfa **AWUS036AXM** (MediaTek MT7921AU) staged on
-  a powered hub is auto-selected in monitor mode; its tri-band radio sees 6 GHz
-  networks the pager's own 2.4 GHz-only `phy0` cannot
+- **External WiFi dongle** — an Alfa **AWUS036AXM** (MediaTek MT7921AU, tri-band
+  2.4/5/6 GHz) staged on a powered hub is auto-selected in monitor mode; its
+  external antennas add range and it frees the pager's own radios
 - **Passive handshake capture** (opt-in, off by default) — records WPA EAPOL
   4-way handshakes to a standard pcap while wardriving; strictly passive, no
   deauth / injection / association
@@ -145,7 +145,7 @@ SPLASH + GREEN-gate
   ▼
 MAIN MENU
   ├── WARDRIVE BOTH     // WiFi + BLE concurrently (separate radios)
-  ├── WARDRIVE WIFI     // iw scan only
+  ├── WARDRIVE WIFI     // WiFi only (monitor or iw scan, auto-selected)
   ├── WARDRIVE BT       // BLE only
   │    │
   │    ▼ (any scan waits here if no GPS fix)
@@ -186,7 +186,8 @@ MAIN MENU
 **Live HUD numbers.** The big number in each cell is *rows written to the CSV*.
 The small "seen" number is raw sightings, which climbs several times faster
 because every AP is re-seen on every pass. The `ROWS` cell also shows the rate
-the file is actually growing at, in rows/min.
+the file is actually growing at, in rows/min. When handshake capture is on, the
+HUD header also shows an `hs:N` count of captured EAPOL frames.
 
 ## Capture backends
 
@@ -271,9 +272,16 @@ opkg install kmod-mt7921u kmod-mt76-usb kmod-mt7921-firmware
 
 Once the modules are loaded the dongle appears as a new `wlanN`. Bring it up in
 monitor mode (e.g. as `wlan2mon`) and WDGoWars picks it up automatically on
-`scan.wifi_iface = "auto"` — exactly the path the AWUS036ACM already used. The
-AXM's tri-band radio sees 6 GHz networks the pager's own `phy0` never can, so
-it is the recommended capture source when available.
+`scan.wifi_iface = "auto"` — exactly the path the AWUS036ACM already used
+(`auto` ranks an external monitor interface above the pager's own `wlan1mon`).
+
+The pager's built-in `phy1` is already tri-band, so this is not the only way to
+reach 5/6 GHz; the AXM's win is its external antennas (more range/sensitivity)
+and giving wardriving a dedicated radio so it stops competing with the pager's
+own management and BLE radios. For 6 GHz specifically, the usual driver +
+regulatory-domain caveats apply — see **BAND PLAN drives both backends** above:
+a band the radio reports as `disabled` is dropped, so set your regdomain
+(`iw reg set <CC>`) if 6 GHz isn't showing.
 
 ## USB storage output — OUTPUT DEVICE
 
@@ -476,13 +484,14 @@ Parsers (WiFi, BLE, NMEA) + CSV writer + deduper are decoupled from the pager:
 python3 -m unittest discover -t . -s tests
 ```
 
-250 tests covering everything that can be exercised without the LCD: both WiFi
+258 tests covering everything that can be exercised without the LCD: both WiFi
 parsers, the shared AuthMode builder, GPS position history and fix-dropout
 handling, movement-aware dedup, the CSV writer and rotation, interface
 selection, the monitor-mode pcap decoder (fed synthetic frames over a pipe),
-the uploader's v1/v2 routing and job polling, the USB partition/mount
-detection, the handshake pcap classifier, and internal+USB session
-aggregation for SYNC / SESSIONS / ERASE SYNCED.
+the band-plan-driven hopper (per-band selection incl. 6 GHz), the uploader's
+v1/v2 routing and job polling, the USB partition/mount detection, the handshake
+pcap classifier, and internal+USB session aggregation for SYNC / SESSIONS /
+ERASE SYNCED.
 
 `tests/fixtures/iw_scan_pager_iw69.txt` is a real capture off a Pager. It
 pins three format details that differ from older `iw` and each of which broke
