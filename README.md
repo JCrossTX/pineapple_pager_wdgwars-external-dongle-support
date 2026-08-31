@@ -466,11 +466,13 @@ Parsers (WiFi, BLE, NMEA) + CSV writer + deduper are decoupled from the pager:
 python3 -m unittest discover -t . -s tests
 ```
 
-218 tests covering everything that can be exercised without the LCD: both WiFi
+250 tests covering everything that can be exercised without the LCD: both WiFi
 parsers, the shared AuthMode builder, GPS position history and fix-dropout
 handling, movement-aware dedup, the CSV writer and rotation, interface
 selection, the monitor-mode pcap decoder (fed synthetic frames over a pipe),
-and the uploader's v1/v2 routing and job polling.
+the uploader's v1/v2 routing and job polling, the USB partition/mount
+detection, the handshake pcap classifier, and internal+USB session
+aggregation for SYNC / SESSIONS / ERASE SYNCED.
 
 `tests/fixtures/iw_scan_pager_iw69.txt` is a real capture off a Pager. It
 pins three format details that differ from older `iw` and each of which broke
@@ -482,6 +484,35 @@ bit 4 is set, which had every WEP network classified as open.
 `wdgwars.py` needs `pagerctl`, which only exists on the device;
 `tests/test_app_smoke.py` stubs it so import errors and menu-wiring typos are
 caught off-device too.
+
+## Building a release
+
+`build_release.sh` packages a clean, deploy-ready bundle of the payload:
+
+```sh
+sh build_release.sh            # version from payload.sh + git short SHA
+sh build_release.sh 1.2.0      # or pin an explicit version
+```
+
+It byte-compiles every module first as a release gate, strips dev scratch,
+runtime state and any secret (the bundled `config.json` is template-only, with
+an empty `api_key`), normalises shell scripts to LF, and writes to `dist/`
+(gitignored):
+
+```
+dist/wdgwars-<version>.tar.gz          # release archive (payload + README + CHANGELOG)
+dist/wdgwars-<version>.zip             # same, for Windows (if `zip` is present)
+dist/wdgwars-<version>.tar.gz.sha256   # checksum
+```
+
+Deploy a release the same way as a clone — unpack and copy the inner
+`wdgwars/` folder onto the pager, then run `bootstrap.sh`:
+
+```sh
+tar xzf wdgwars-<version>.tar.gz
+scp -r wdgwars-<version>/wdgwars root@172.16.52.1:/mmc/root/payloads/user/reconnaissance/wdgwars
+ssh root@172.16.52.1 'cd /mmc/root/payloads/user/reconnaissance/wdgwars && sh bootstrap.sh'
+```
 
 ## Non-goals
 
