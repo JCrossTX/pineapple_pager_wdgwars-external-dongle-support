@@ -48,10 +48,12 @@ wdgwars/
 │   ├── iface.py        # `iw dev` enumeration + capture-source selection
 │   ├── wifi.py         # `iw scan` backend: band rotation, cache-age filtering
 │   ├── monitor.py      # monitor-mode backend: radiotap + 802.11 IE decoding
+│   ├── handshake.py    # passive EAPOL/handshake capture to pcap (tcpdump)
 │   ├── wigle_auth.py   # shared AuthMode bracket-string builder
 │   ├── ble.py          # bluetoothctl over pty
 │   └── gps.py          # gpsd client + rolling position history
 ├── storage/            # WigleWifi-1.6 CSV writer + movement-aware deduper
+│                       # + usbdrive.py (external USB storage detect/mount)
 └── uploader/           # multipart POST (v1 sync / v2 async queue) + history
 ```
 
@@ -84,7 +86,11 @@ wdgwars/
    `libpagerctl.so` from the bundled `wifman` payload, installs `iw` /
    `bluez-utils` / `kmod-usb-acm` / `gpsd` / `tcpdump-mini` via `opkg`
    (best-effort — `tcpdump-mini` is only needed for the monitor-mode
-   backend), creates the loot dir, **and pushes the reverse JUMP TO launcher
+   backend), installs the **external-dongle** packages
+   (`kmod-mt7921u` / `kmod-mt76-usb` / `kmod-mt7921-firmware` for the Alfa
+   AWUS036AXM, and `kmod-usb-storage` / `block-mount` / `kmod-fs-vfat` /
+   `kmod-fs-exfat` / `dosfstools` for a hub-attached USB stick), creates the
+   loot dir, **and pushes the reverse JUMP TO launcher
    (`launch_wdgwars.sh`) into every peer payload it finds installed**
    (Loki / PagerGotchi / WiFMan / Bjorn). No manual scp loop needed.
 
@@ -133,6 +139,7 @@ MAIN MENU
   │                  A=pause  B=end  ↑↓=brightness
   │
   ├── SYNC NOW       // multipart upload, NEW BADGE flash
+  ├── ERASE SYNCED   // delete uploaded session CSVs (pcaps kept)
   ├── SESSIONS       // list files with v / ^ / x icons
   ├── UPLOAD LOG     // GET /api/upload-history — server-side import counts
   ├── CONFIG
@@ -144,9 +151,13 @@ MAIN MENU
   │    │    ├── BAND PLAN        // rotate / 2.4 only / 2.4+5 / full sweep
   │    │    ├── MONITOR HOP      // let us hop channels, or leave it to a
   │    │    │                    // setup payload that already does
+  │    │    ├── HANDSHAKE CAP    // passive EAPOL/handshake capture to pcap
+  │    │    ├── HS BEACONS       // fold beacons into the pcap for SSID context
   │    │    ├── MOVE FILTER +/-  // metres before an AP is logged again
   │    │    ├── REFRESH TTL +/-  // slow re-log even when standing still
   │    │    └── REQUIRE GPS FIX  // refuse to write rows without a fix
+  │    ├── OUTPUT DEVICE    // internal eMMC or a USB stick on the hub
+  │    │    └── INTERNAL / USB AUTO / sdX1 ...  // where new loot is written
   │    ├── BRIGHTNESS +/-   // 70% default, stays on position
   │    ├── IDLE TIMEOUT +/- // 20 s default, 5-600 s
   │    ├── DIM LEVEL +/-    // 10% default (hardware off-floor)
@@ -219,6 +230,96 @@ cfg80211 keeps entries for about 30 seconds. Each block carries a
 drops anything older than the sweep, and asks the kernel to flush the cache
 before each pass. Monitor mode sidesteps the problem entirely: every frame
 carries its own capture timestamp.
+
+## External WiFi dongle (Alfa AWUS036AXM)
+
+This fork adds first-class support for staging an external **Alfa AWUS036AXM**
+(MediaTek **MT7921AU**) on a powered USB hub alongside the GPS stick. Its
+kernel modules are installed by `bootstrap.sh`:
+
+```sh
+opkg update
+opkg install kmod-mt7921u kmod-mt76-usb kmod-mt7921-firmware
+```
+
+Once the modules are loaded the dongle appears as a new `wlanN`. Bring it up in
+monitor mode (e.g. as `wlan2mon`) and WDGoWars picks it up automatically on
+`scan.wifi_iface = "auto"` — exactly the path the AWUS036ACM already used. The
+AXM's tri-band radio sees 6 GHz networks the pager's own `phy0` never can, so
+it is the recommended capture source when available.
+
+## USB storage output — OUTPUT DEVICE
+
+With a USB stick sharing the powered hub, sessions and handshake pcaps can be
+written straight to removable media instead of the pager's internal eMMC.
+**CONFIG → OUTPUT DEVICE** lists the detected USB partitions (a hub-attached
+stick shows up as `/dev/sd*`, telling it apart from the internal
+`/dev/mmcblk*`) with size and mount state:
+
+- **INTERNAL (eMMC)** — the default, `/mmc/root/loot/wdgwars`.
+- **USB AUTO** — auto-pick the largest USB partition, mounting it if the
+  firmware left it unmounted.
+- **`sdX1`, …** — pin a specific partition.
+
+The chosen target is mounted under `/mnt/wdgwars-usb` (configurable via
+`storage.usb_mount`) and new loot goes to `<mount>/wdgwars/`. If a USB target is
+configured but cannot be mounted or written, WDGoWars falls back to internal
+storage rather than blocking the scan, and the CONFIG badge shows where loot is
+really landing.
+
+**SYNC NOW** and **SESSIONS** always look for a USB source — even when
+*internal* is the selected output — and read from *both* the internal eMMC and
+any mounted USB stick that carries a `wdgwars/sessions/`. So sessions captured
+under either target are uploaded and listed together, and switching the output
+device never strands earlier sessions on the storage you're no longer writing
+to. If a stick is present but unmounted, SYNC mounts it first. Upload markers
+(`.uploaded` / `.error`) are written next to each CSV wherever it lives, so a
+stick keeps its own sync state.
+
+**ERASE SYNCED** (main menu, right after SYNC NOW) frees space by deleting the
+session CSVs that were **successfully uploaded** — those carrying a `.uploaded`
+marker — across both internal and USB, after a confirmation showing how many
+and how much. Its badge shows the count that would be removed. Pending and
+errored sessions are left alone. **Handshake pcaps live in a separate
+`handshakes/` directory and are never uploaded or erased by this** — they are
+yours to manage (copy off the stick, delete manually) independently of the
+WigleWifi session sync.
+
+```json
+"storage": {
+  "output": "usb",
+  "usb_mount": "/mnt/wdgwars-usb",
+  "usb_device": "/dev/sda1"
+}
+```
+
+## Passive handshake capture
+
+WDGoWars can additionally record WPA **4-way-handshake** material to a standard
+pcap while it wardrives. It is **off by default** and strictly **passive** —
+there is no deauthentication, no injection, and no association; it only writes
+the EAPOL frames that clients already exchange over the air, plus (optionally)
+beacons so an offline tool can label which network a handshake belongs to.
+
+Enable it with **CONFIG → SCAN SETUP → HANDSHAKE CAP** (and **HS BEACONS** to
+fold in beacon context). Because EAPOL frames are invisible to `iw scan`, the
+capture only runs when a **monitor-mode** interface is active — typically the
+AWUS036AXM as `wlan2mon` — and rides that interface's own channel hopper. It
+says so if you enable it while on the `iw scan` fallback.
+
+`tcpdump` writes the pcap directly to `<loot>/handshakes/hs-<session>.pcap`
+(internal or USB, following the OUTPUT DEVICE selection), so the file is a
+real, aircrack-ng / hashcat-compatible capture even across a crash. The live
+HUD header shows an `hs:N` counter of captured EAPOL frames, and the
+end-of-session dialog names the pcap and its handshake count. Config:
+
+```json
+"handshake": {
+  "enabled": true,
+  "include_beacons": true,
+  "snaplen": 0
+}
+```
 
 ## Deduplication
 
@@ -331,9 +432,14 @@ for `no_gps` or `bad_rows`.
   local `.key` file (both gitignored).
 - `bootstrap.sh` never writes an api key. You must either paste one into
   `config.json` on the pager via SSH or type it via **CONFIG → EDIT API KEY**.
-- The payload only collects **publicly broadcast** data — the same information
-  every WiFi / BLE device puts out over the air. No packet interception, no
-  traffic analysis.
+- The wardriving path only collects **publicly broadcast** data — the same
+  information every WiFi / BLE device puts out over the air. No traffic
+  analysis.
+- **Passive handshake capture is opt-in and off by default.** When enabled it
+  records the WPA EAPOL handshake frames that are transmitted in the clear over
+  the air, but it never deauthenticates, injects, or associates — it is a
+  listener, not an attacker. Only turn it on where you are authorised to
+  capture, and handle the resulting pcaps accordingly.
 
 ## Local development
 
@@ -365,7 +471,8 @@ caught off-device too.
 - No web dashboard — everything on the pager LCD.
 - No Aircraft (ADS-B) or LoRa mesh — pager has no SDR / LoRa.
 - No multi-theme switching — one coherent cyberpunk look.
-- No packet capture / handshake grabbing — we only log broadcasts.
+- No **active** attacks — handshake capture is passive only (no deauth /
+  injection / association).
 
 ## Credits
 

@@ -22,12 +22,14 @@ from pagerctl import Pager  # noqa: E402
 from ui import theme, splash, menu, dialog, status as hud, keyboard, idle  # noqa: E402
 from scanners.wifi import WifiScanner, DEFAULT_PLAN  # noqa: E402
 from scanners.monitor import MonitorScanner  # noqa: E402
+from scanners.handshake import HandshakeCapture  # noqa: E402
 from scanners.ble import BleScanner  # noqa: E402
 from scanners.gps import GpsReader  # noqa: E402
 from scanners.iface import list_interfaces, pick_wifi_source  # noqa: E402
 from storage.session import (  # noqa: E402
     Session, list_pending, list_all, mark_uploaded, mark_error,
 )
+from storage import usbdrive  # noqa: E402
 from uploader import wdgwars as api  # noqa: E402
 import handoff  # noqa: E402
 
@@ -89,13 +91,142 @@ class App:
             min_sats=cfg.get("gps", {}).get("min_sats", 4),
         )
         self.gps.start()
-        self.loot_dir = Path(cfg.get("storage", {}).get("loot_dir", "/mmc/root/loot/wdgwars"))
-        self.loot_dir.mkdir(parents=True, exist_ok=True)
-        (self.loot_dir / "sessions").mkdir(exist_ok=True)
+        self.internal_loot = Path(
+            cfg.get("storage", {}).get("loot_dir", "/mmc/root/loot/wdgwars"))
+        # output_active tracks where loot really lands right now — it can differ
+        # from the configured target when a USB stick was requested but is not
+        # actually mounted/writable, in which case we fall back to internal.
+        self.output_active = "internal"
+        self.loot_dir = self.internal_loot
+        self._resolve_output()
+
+    def _resolve_output(self, interactive: bool = False) -> None:
+        """Point ``loot_dir`` at the configured output target.
+
+        ``storage.output`` is ``"internal"`` (eMMC) or ``"usb"`` (a stick on the
+        powered hub). USB is mounted on demand; if it cannot be brought online
+        we fall back to internal so a scan is never blocked by a missing drive.
+        When *interactive* the outcome is shown to the user.
+        """
+        store = self.cfg.get("storage", {})
+        target = store.get("output", "internal")
+        if target == "usb":
+            loot, msg = usbdrive.prepare_output(
+                store.get("usb_device") or None,
+                store.get("usb_mount", usbdrive.DEFAULT_MOUNT))
+            if loot is not None:
+                self.loot_dir = loot
+                self.output_active = "usb"
+                if interactive:
+                    dialog.alert(self.p, self.pal, "OUTPUT",
+                                 f"Saving to USB:\n{loot}\n\n{msg}",
+                                 accent=self.pal.green)
+            else:
+                self.loot_dir = self.internal_loot
+                self.output_active = "internal"
+                if interactive:
+                    dialog.alert(self.p, self.pal, "OUTPUT",
+                                 f"USB unavailable:\n{msg}\n\n"
+                                 f"Falling back to\ninternal storage.",
+                                 accent=self.pal.amber)
+        else:
+            self.loot_dir = self.internal_loot
+            self.output_active = "internal"
+            if interactive:
+                dialog.alert(self.p, self.pal, "OUTPUT",
+                             f"Saving to internal:\n{self.internal_loot}",
+                             accent=self.pal.cyan)
+        try:
+            self.loot_dir.mkdir(parents=True, exist_ok=True)
+            (self.loot_dir / "sessions").mkdir(exist_ok=True)
+        except OSError:
+            pass
 
     @property
     def sessions_dir(self) -> Path:
         return self.loot_dir / "sessions"
+
+    @property
+    def handshakes_dir(self) -> Path:
+        return self.loot_dir / "handshakes"
+
+    def _session_dirs(self) -> list[Path]:
+        """Every session directory SYNC / SESSIONS should read.
+
+        New rows are written to the active target (``sessions_dir``), but loot
+        can live in three places at once: the active target, the internal eMMC,
+        and any USB stick that already carries a ``wdgwars/sessions`` — even
+        when internal is the selected output. SYNC always looks for a USB
+        source, so all three are scanned, deduplicated (with internal output
+        the active dir collapses onto the internal one).
+        """
+        dirs = [self.sessions_dir]
+        internal = self.internal_loot / "sessions"
+        if internal not in dirs:
+            dirs.append(internal)
+        for sdir in self._mounted_usb_session_dirs():
+            if sdir not in dirs:
+                dirs.append(sdir)
+        return dirs
+
+    def _mounted_usb_session_dirs(self) -> list[Path]:
+        """`sessions/` dirs on every currently-mounted USB stick that has one.
+
+        Read-only and cheap (parses /proc); does not mount anything. Handshake
+        pcaps live in a sibling `handshakes/` dir and are deliberately not
+        returned — SYNC and ERASE SYNCED only ever see session CSVs.
+        """
+        out: list[Path] = []
+        try:
+            for part in usbdrive.list_usb_partitions():
+                if part.mountpoint:
+                    sdir = usbdrive.loot_dir_for(part.mountpoint) / "sessions"
+                    if sdir.is_dir():
+                        out.append(sdir)
+        except Exception:
+            pass
+        return out
+
+    def _mount_usb_for_read(self) -> None:
+        """Best-effort: bring a USB stick online so SYNC/SESSIONS can see its
+        sessions even when internal is the selected output. Never changes the
+        active output target, and no-ops when a stick is already mounted."""
+        try:
+            parts = usbdrive.list_usb_partitions()
+            if any(p.is_mounted for p in parts):
+                return
+            store = self.cfg.get("storage", {})
+            device = store.get("usb_device") or (parts[0].device if parts else None)
+            if device:
+                usbdrive.ensure_mounted(
+                    device, store.get("usb_mount", usbdrive.DEFAULT_MOUNT))
+        except Exception:
+            pass
+
+    def _synced_sessions(self) -> list[Path]:
+        """Session CSVs marked `.uploaded` (successfully synced), all dirs."""
+        return [p for p, st in self._all_sessions() if st == "ok"]
+
+    def _all_pending(self) -> list[Path]:
+        """Pending CSVs across all session dirs, oldest-first globally."""
+        found: dict[str, Path] = {}
+        for d in self._session_dirs():
+            for p in list_pending(d):
+                found[str(p)] = p
+        return sorted(found.values(), key=_safe_mtime)
+
+    def _all_sessions(self) -> list[tuple[Path, str]]:
+        """(path, status) across all session dirs, newest-first globally."""
+        seen: set[str] = set()
+        rows: list[tuple[Path, str]] = []
+        for d in self._session_dirs():
+            for p, st in list_all(d):
+                if str(p) in seen:
+                    continue
+                seen.add(str(p))
+                rows.append((p, st))
+        rows.sort(key=lambda r: _safe_mtime(r[0]), reverse=True)
+        return rows
 
     def run(self) -> str | None:
         """Returns None on normal exit, handoff.HANDOFF_SENTINEL if the user
@@ -115,8 +246,13 @@ class App:
 
     def _main_menu(self):
         def build():
-            pending = len(list_pending(self.sessions_dir))
-            all_count = len(list_all(self.sessions_dir))
+            # One scan feeds all three badges. "pending" mirrors list_pending
+            # (anything not uploaded — includes .error, which SYNC retries);
+            # "synced" is what ERASE SYNCED would remove.
+            sessions = self._all_sessions()
+            all_count = len(sessions)
+            pending = sum(1 for _, st in sessions if st != "ok")
+            synced = sum(1 for _, st in sessions if st == "ok")
             peers = handoff.discover(_HERE)
             items = [
                 menu.MenuItem("WARDRIVE BOTH",
@@ -127,6 +263,8 @@ class App:
                               action=lambda: self._action_scan(wifi=False, ble=True)),
                 menu.MenuItem("SYNC NOW", action=lambda: self._action_sync(),
                               badge=f"Q:{pending}" if pending else None),
+                menu.MenuItem("ERASE SYNCED", action=lambda: self._action_erase_synced(),
+                              badge=str(synced) if synced else None),
                 menu.MenuItem("SESSIONS", action=lambda: self._action_sessions(),
                               badge=str(all_count) if all_count else None),
                 menu.MenuItem("UPLOAD LOG", action=lambda: self._action_history()),
@@ -281,6 +419,32 @@ class App:
         )
         st = hud.HudState(session_id=sess.session_id, source=src_label)
 
+        # Passive handshake capture. EAPOL frames are only visible in monitor
+        # mode, so it rides the MonitorScanner's interface + hopper; on the
+        # `iw scan` fallback there is nothing to capture, and we say so.
+        handshake = None
+        hs_cfg = self.cfg.get("handshake", {})
+        if hs_cfg.get("enabled"):
+            if isinstance(wifi, MonitorScanner) and wifi.available:
+                handshake = HandshakeCapture(
+                    wifi.iface, self.handshakes_dir, sess.session_id,
+                    include_beacons=bool(hs_cfg.get("include_beacons", True)),
+                    snaplen=int(hs_cfg.get("snaplen", 0)),
+                )
+                handshake.start()
+                if handshake.available:
+                    st.hs_on = True
+                else:
+                    dialog.alert(self.p, self.pal, "HANDSHAKE",
+                                 f"Capture disabled:\n{handshake.last_error}",
+                                 accent=self.pal.amber)
+                    handshake = None
+            elif use_wifi:
+                dialog.alert(self.p, self.pal, "HANDSHAKE",
+                             "Needs monitor mode.\nRunning iw scan, so no\n"
+                             "handshake capture.",
+                             accent=self.pal.amber)
+
         def adjust_brightness(delta: int) -> None:
             mgr = idle.get()
             new = max(5, min(100, (mgr.brightness if mgr else 70) + delta))
@@ -311,6 +475,8 @@ class App:
                 st.gps_sats = live.sats
                 st.lat = live.lat
                 st.lon = live.lon
+                if handshake:
+                    st.hs_eapol = handshake.eapol
 
                 if st.paused:
                     # Keep draining or the queues grow without bound and the
@@ -387,6 +553,8 @@ class App:
                 wifi.stop()
             if ble:
                 ble.stop()
+            if handshake:
+                handshake.stop()
             # One last drain: the scanners were still emitting up to the
             # moment we tore them down.
             try:
@@ -404,10 +572,15 @@ class App:
 
         s = sess.stats
         held = f"\nno-fix skipped: {s.skipped_no_fix}" if s.skipped_no_fix else ""
+        hs_line = ""
+        if handshake:
+            hs_line = (f"\nHS: {handshake.eapol} eapol -> "
+                       f"{handshake.pcap_file.name}")
+        dest = "USB" if self.output_active == "usb" else "internal"
         dialog.alert(self.p, self.pal, "SAVED",
-                     f"Wrote {s.rows_written} rows\n"
+                     f"Wrote {s.rows_written} rows ({dest})\n"
                      f"WiFi: {s.wifi_total}  BLE: {s.ble_total}\n"
-                     f"File: {Path(s.files[-1]).name}{held}",
+                     f"File: {Path(s.files[-1]).name}{held}{hs_line}",
                      accent=self.pal.green)
 
     def _action_sync(self):
@@ -417,7 +590,11 @@ class App:
                          "No API key configured.\nGo to CONFIG.", accent=self.pal.red)
             return
 
-        pending = list_pending(self.sessions_dir)
+        # Always look for a USB source, even when internal is selected — then
+        # upload pending CSVs from every session dir (internal eMMC + any USB
+        # stick) so nothing is stranded on storage that isn't currently active.
+        self._mount_usb_for_read()
+        pending = self._all_pending()
         if not pending:
             dialog.alert(self.p, self.pal, "SYNC",
                          "Queue is empty.\nNothing to upload.", accent=self.pal.cyan)
@@ -573,7 +750,8 @@ class App:
         dialog.alert(self.p, self.pal, "UPLOAD", "\n".join(lines), accent=accent)
 
     def _action_sessions(self):
-        rows = list_all(self.sessions_dir)
+        self._mount_usb_for_read()
+        rows = self._all_sessions()
         if not rows:
             dialog.alert(self.p, self.pal, "SESSIONS",
                          "No sessions yet.\nStart a scan first.")
@@ -617,6 +795,8 @@ class App:
                 menu.MenuItem("TEST CONNECTION", action=lambda: self._cfg_test()),
                 menu.MenuItem("SCAN SETUP", action=lambda: self._cfg_scan(),
                               badge=str(scan_cfg.get("wifi_iface", "auto"))),
+                menu.MenuItem("OUTPUT DEVICE", action=lambda: self._cfg_output(),
+                              badge=self.output_active.upper()),
                 menu.MenuItem("GPS DEVICE", action=lambda: self._cfg_gps_device(),
                               badge=gps_current.replace("/dev/", "")),
                 menu.MenuItem("GPS BAUD", action=lambda: self._cfg_gps_baud(),
@@ -636,6 +816,96 @@ class App:
                 menu.MenuItem("BACK", action=lambda: "back"),
             ]
         menu.run(self.p, self.pal, "CONFIG", build_items)
+
+    # ---------------- output device ---------------- #
+
+    def _cfg_output(self):
+        """Choose where sessions and handshake pcaps are written — the pager's
+        internal eMMC, or a USB stick on the powered hub. USB partitions are
+        listed with size and current mount state; picking one mounts it (if the
+        firmware didn't) and writes loot straight to it from then on."""
+        def build():
+            store = self.cfg.get("storage", {})
+            target = store.get("output", "internal")
+            usb_dev = store.get("usb_device") or None
+            items = [
+                menu.MenuItem("INTERNAL (eMMC)",
+                              action=lambda: self._set_output("internal", None),
+                              badge="*" if target == "internal" else None),
+                menu.MenuItem("USB AUTO",
+                              action=lambda: self._set_output("usb", None),
+                              badge="*" if target == "usb" and not usb_dev else None),
+            ]
+            for part in usbdrive.list_usb_partitions():
+                mount_tag = "mounted" if part.is_mounted else f"{part.size_mb}M"
+                sel = target == "usb" and usb_dev == part.device
+                items.append(menu.MenuItem(
+                    part.name,
+                    action=lambda d=part.device: self._set_output("usb", d),
+                    badge=("* " + mount_tag) if sel else mount_tag))
+            items.append(menu.MenuItem("BACK", action=lambda: "back"))
+            return items
+        menu.run(self.p, self.pal, "OUTPUT DEVICE", build)
+
+    def _action_erase_synced(self):
+        """Delete session CSVs that were successfully synced (carry a
+        ``.uploaded`` marker), across internal and USB, to free space. Handshake
+        pcaps live in a separate `handshakes/` dir and are never touched."""
+        self._mount_usb_for_read()
+        synced = self._synced_sessions()
+        if not synced:
+            dialog.alert(self.p, self.pal, "ERASE SYNCED",
+                         "No synced sessions\nto erase.", accent=self.pal.cyan)
+            return
+        total_kb = 0
+        for p in synced:
+            try:
+                total_kb += p.stat().st_size // 1024
+            except OSError:
+                pass
+        if not dialog.confirm(self.p, self.pal, "ERASE SYNCED",
+                              f"Delete {len(synced)} synced\n"
+                              f"sessions ({total_kb} KB)?\n\n"
+                              f"Handshake pcaps kept."):
+            return
+        removed, freed = self._erase_sessions(synced)
+        dialog.alert(self.p, self.pal, "ERASE SYNCED",
+                     f"Erased {removed} sessions.\nFreed {freed // 1024} KB.",
+                     accent=self.pal.green)
+        # None keeps us on the main menu, which rebuilds with the badge cleared.
+        return None
+
+    @staticmethod
+    def _erase_sessions(csvs: list[Path]) -> tuple[int, int]:
+        """Delete each session CSV and its own `.uploaded` / `.error` markers.
+
+        Returns ``(files_removed_count, bytes_freed)``. Only the named CSVs and
+        their sibling markers are removed — no directory is walked, so handshake
+        pcaps (in a separate `handshakes/` dir) can never be caught up in it.
+        """
+        removed = 0
+        freed = 0
+        for csv in csvs:
+            for target in (csv,
+                           csv.with_suffix(csv.suffix + ".uploaded"),
+                           csv.with_suffix(csv.suffix + ".error")):
+                try:
+                    if target.exists():
+                        freed += target.stat().st_size
+                        target.unlink()
+                except OSError:
+                    pass
+            removed += 1
+        return removed, freed
+
+    def _set_output(self, target: str, device: str | None):
+        store = self.cfg.setdefault("storage", {})
+        store["output"] = target
+        if target == "usb":
+            store["usb_device"] = device or ""
+        save_config(self.cfg)
+        self._resolve_output(interactive=True)
+        return "back"
 
     # ---------------- scan setup ---------------- #
 
@@ -662,6 +932,10 @@ class App:
                               badge=plan_name),
                 menu.MenuItem("MONITOR HOP", action=lambda: self._cfg_toggle("monitor_hop", True),
                               badge="on" if sc.get("monitor_hop", True) else "off"),
+                menu.MenuItem("HANDSHAKE CAP", action=lambda: self._cfg_hs_toggle("enabled", False),
+                              badge="on" if self.cfg.get("handshake", {}).get("enabled", False) else "off"),
+                menu.MenuItem("HS BEACONS", action=lambda: self._cfg_hs_toggle("include_beacons", True),
+                              badge="on" if self.cfg.get("handshake", {}).get("include_beacons", True) else "off"),
                 menu.MenuItem("MOVE FILTER +", action=lambda: self._cfg_scan_num("min_move_m", +10, 0, 300),
                               badge=f"{sc.get('min_move_m', 30)}m"),
                 menu.MenuItem("MOVE FILTER -", action=lambda: self._cfg_scan_num("min_move_m", -10, 0, 300),
@@ -719,6 +993,11 @@ class App:
     def _cfg_toggle(self, key: str, default: bool):
         sc = self.cfg.setdefault("scan", {})
         sc[key] = not bool(sc.get(key, default))
+        save_config(self.cfg)
+
+    def _cfg_hs_toggle(self, key: str, default: bool):
+        hs = self.cfg.setdefault("handshake", {})
+        hs[key] = not bool(hs.get(key, default))
         save_config(self.cfg)
 
     def _cfg_scan_num(self, key: str, delta: int, lo: int, hi: int):
@@ -859,6 +1138,14 @@ class App:
                           "Quit WDGoWars Wardriver?"):
             return "exit"
         return None
+
+
+def _safe_mtime(path: Path) -> float:
+    """Modification time, or 0.0 if the file vanished between listing and sort."""
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
 
 
 def _rows_per_min(hist) -> float:

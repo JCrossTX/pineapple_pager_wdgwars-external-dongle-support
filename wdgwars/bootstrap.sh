@@ -32,7 +32,16 @@ fi
 
 echo "[bootstrap] opkg runtime packages (best-effort, needs internet)"
 opkg update >/dev/null 2>&1 || true
-for pkg in iw bluez-utils kmod-usb-acm gpsd gpsd-clients tcpdump-mini; do
+# Core payload deps, plus:
+#   kmod-mt7921u / kmod-mt76-usb / kmod-mt7921-firmware — drive the MediaTek
+#     MT7921AU in the Alfa AWUS036AXM external WiFi dongle so it comes up as a
+#     usable wlanN (bring it to monitor mode as wlan2mon; WDGoWars auto-picks it).
+#   kmod-usb-storage + block-mount + filesystem kmods/tools — let the pager
+#     read/write a USB stick on the powered hub, so sessions and handshake
+#     pcaps can be saved straight to removable media.
+for pkg in iw bluez-utils kmod-usb-acm gpsd gpsd-clients tcpdump-mini \
+           kmod-mt7921u kmod-mt76-usb kmod-mt7921-firmware \
+           kmod-usb-storage block-mount kmod-fs-vfat kmod-fs-exfat dosfstools; do
     opkg list-installed 2>/dev/null | grep -q "^$pkg " \
         || opkg install "$pkg" >/dev/null 2>&1 \
         || echo "  warn: could not install $pkg"
@@ -40,6 +49,14 @@ done
 
 echo "[bootstrap] loading cdc_acm for u-blox"
 modprobe cdc_acm 2>/dev/null || true
+
+echo "[bootstrap] loading USB modules for external dongle + storage"
+# mt7921u brings up the Alfa AWUS036AXM; usb-storage exposes a hub-attached
+# USB stick as /dev/sd*. Both are best-effort — the kmods above may only apply
+# after a reboot on some firmware builds.
+for mod in mt7921u usb-storage; do
+    modprobe "$mod" 2>/dev/null || true
+done
 
 mkdir -p /mmc/root/loot/wdgwars/sessions
 
