@@ -1,5 +1,43 @@
 # Changelog
 
+## Unreleased — external dongle support (fork)
+
+Adds support for an external WiFi dongle and USB storage staged on a powered
+hub, plus opt-in passive handshake capture.
+
+### Added
+
+- **Alfa AWUS036AXM (MT7921AU) support.** `bootstrap.sh` now runs `opkg update`
+  and installs `kmod-mt7921u`, `kmod-mt76-usb` and `kmod-mt7921-firmware` so the
+  dongle enumerates as a usable `wlanN`. Brought up in monitor mode (e.g.
+  `wlan2mon`) it is auto-selected by `scan.wifi_iface = "auto"`, and its
+  tri-band radio sees 6 GHz networks the pager's own `phy0` cannot.
+- **USB storage output** (`storage/usbdrive.py`, **CONFIG → OUTPUT DEVICE**).
+  Detects hub-attached USB partitions (`/dev/sd*`, distinct from internal
+  `/dev/mmcblk*`), mounts a chosen one under `/mnt/wdgwars-usb`, and writes
+  sessions + handshake pcaps to `<mount>/wdgwars/`. Falls back to internal
+  storage if the stick can't be mounted/written, so a scan is never blocked.
+  `bootstrap.sh` installs `kmod-usb-storage`, `block-mount`, `kmod-fs-vfat`,
+  `kmod-fs-exfat` and `dosfstools`.
+- **Passive handshake capture** (`scanners/handshake.py`, **CONFIG → SCAN SETUP
+  → HANDSHAKE CAP**). Off by default. Records WPA EAPOL 4-way-handshake frames
+  (plus optional beacons for SSID context) to a tool-compatible pcap at
+  `<loot>/handshakes/hs-<session>.pcap` via `tcpdump`. Strictly passive — no
+  deauth, injection, or association. Requires a monitor interface (EAPOL is
+  invisible to `iw scan`) and rides its channel hopper. The live HUD shows an
+  `hs:N` EAPOL counter and the end-of-session dialog names the pcap.
+
+### Config
+
+- `storage.output` (`"internal"` / `"usb"`), `storage.usb_mount`,
+  `storage.usb_device`.
+- `handshake.enabled`, `handshake.include_beacons`, `handshake.snaplen`.
+
+### Tests
+
+245, up from 218. Adds pure-parser coverage for the USB partition/mount
+detection and for the handshake pcap classifier + follower thread.
+
 ## 1.1 — 2026-07-26
 
 Reworked WiFi capture, GPS geo-tagging and deduplication. Started from a

@@ -25,7 +25,15 @@
   "storage": {
     "max_file_mb": 30,
     "loot_dir": "/mmc/root/loot/wdgwars",
-    "flush_interval_s": 2.0
+    "flush_interval_s": 2.0,
+    "output": "internal",
+    "usb_mount": "/mnt/wdgwars-usb",
+    "usb_device": ""
+  },
+  "handshake": {
+    "enabled": false,
+    "include_beacons": true,
+    "snaplen": 0
   },
   "upload": {
     "mode": "auto"

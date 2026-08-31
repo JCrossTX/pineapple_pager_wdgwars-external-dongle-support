@@ -43,7 +43,9 @@ class TestModuleLoads(unittest.TestCase):
     def test_app_exposes_the_wired_up_actions(self):
         for name in ("_live_scan", "_start_wifi", "_action_sync",
                      "_action_history", "_action_sessions", "_cfg_scan",
-                     "_cfg_wifi_source", "_show_history_entry"):
+                     "_cfg_wifi_source", "_show_history_entry",
+                     "_cfg_output", "_set_output", "_resolve_output",
+                     "_cfg_hs_toggle"):
             self.assertTrue(callable(getattr(app.App, name, None)), name)
 
     def test_band_presets_reference_real_bands(self):
@@ -60,6 +62,11 @@ class TestModuleLoads(unittest.TestCase):
                     "require_fix", "monitor_hop"):
             self.assertIn(key, scan)
         self.assertIn("mode", cfg["upload"])
+        # External-dongle fork additions: USB output target + handshake capture.
+        for key in ("output", "usb_mount"):
+            self.assertIn(key, cfg["storage"])
+        for key in ("enabled", "include_beacons"):
+            self.assertIn(key, cfg["handshake"])
 
 
 class TestRateHelper(unittest.TestCase):

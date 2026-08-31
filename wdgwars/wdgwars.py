@@ -22,12 +22,14 @@ from pagerctl import Pager  # noqa: E402
 from ui import theme, splash, menu, dialog, status as hud, keyboard, idle  # noqa: E402
 from scanners.wifi import WifiScanner, DEFAULT_PLAN  # noqa: E402
 from scanners.monitor import MonitorScanner  # noqa: E402
+from scanners.handshake import HandshakeCapture  # noqa: E402
 from scanners.ble import BleScanner  # noqa: E402
 from scanners.gps import GpsReader  # noqa: E402
 from scanners.iface import list_interfaces, pick_wifi_source  # noqa: E402
 from storage.session import (  # noqa: E402
     Session, list_pending, list_all, mark_uploaded, mark_error,
 )
+from storage import usbdrive  # noqa: E402
 from uploader import wdgwars as api  # noqa: E402
 import handoff  # noqa: E402
 
@@ -89,13 +91,64 @@ class App:
             min_sats=cfg.get("gps", {}).get("min_sats", 4),
         )
         self.gps.start()
-        self.loot_dir = Path(cfg.get("storage", {}).get("loot_dir", "/mmc/root/loot/wdgwars"))
-        self.loot_dir.mkdir(parents=True, exist_ok=True)
-        (self.loot_dir / "sessions").mkdir(exist_ok=True)
+        self.internal_loot = Path(
+            cfg.get("storage", {}).get("loot_dir", "/mmc/root/loot/wdgwars"))
+        # output_active tracks where loot really lands right now — it can differ
+        # from the configured target when a USB stick was requested but is not
+        # actually mounted/writable, in which case we fall back to internal.
+        self.output_active = "internal"
+        self.loot_dir = self.internal_loot
+        self._resolve_output()
+
+    def _resolve_output(self, interactive: bool = False) -> None:
+        """Point ``loot_dir`` at the configured output target.
+
+        ``storage.output`` is ``"internal"`` (eMMC) or ``"usb"`` (a stick on the
+        powered hub). USB is mounted on demand; if it cannot be brought online
+        we fall back to internal so a scan is never blocked by a missing drive.
+        When *interactive* the outcome is shown to the user.
+        """
+        store = self.cfg.get("storage", {})
+        target = store.get("output", "internal")
+        if target == "usb":
+            loot, msg = usbdrive.prepare_output(
+                store.get("usb_device") or None,
+                store.get("usb_mount", usbdrive.DEFAULT_MOUNT))
+            if loot is not None:
+                self.loot_dir = loot
+                self.output_active = "usb"
+                if interactive:
+                    dialog.alert(self.p, self.pal, "OUTPUT",
+                                 f"Saving to USB:\n{loot}\n\n{msg}",
+                                 accent=self.pal.green)
+            else:
+                self.loot_dir = self.internal_loot
+                self.output_active = "internal"
+                if interactive:
+                    dialog.alert(self.p, self.pal, "OUTPUT",
+                                 f"USB unavailable:\n{msg}\n\n"
+                                 f"Falling back to\ninternal storage.",
+                                 accent=self.pal.amber)
+        else:
+            self.loot_dir = self.internal_loot
+            self.output_active = "internal"
+            if interactive:
+                dialog.alert(self.p, self.pal, "OUTPUT",
+                             f"Saving to internal:\n{self.internal_loot}",
+                             accent=self.pal.cyan)
+        try:
+            self.loot_dir.mkdir(parents=True, exist_ok=True)
+            (self.loot_dir / "sessions").mkdir(exist_ok=True)
+        except OSError:
+            pass
 
     @property
     def sessions_dir(self) -> Path:
         return self.loot_dir / "sessions"
+
+    @property
+    def handshakes_dir(self) -> Path:
+        return self.loot_dir / "handshakes"
 
     def run(self) -> str | None:
         """Returns None on normal exit, handoff.HANDOFF_SENTINEL if the user
@@ -281,6 +334,32 @@ class App:
         )
         st = hud.HudState(session_id=sess.session_id, source=src_label)
 
+        # Passive handshake capture. EAPOL frames are only visible in monitor
+        # mode, so it rides the MonitorScanner's interface + hopper; on the
+        # `iw scan` fallback there is nothing to capture, and we say so.
+        handshake = None
+        hs_cfg = self.cfg.get("handshake", {})
+        if hs_cfg.get("enabled"):
+            if isinstance(wifi, MonitorScanner) and wifi.available:
+                handshake = HandshakeCapture(
+                    wifi.iface, self.handshakes_dir, sess.session_id,
+                    include_beacons=bool(hs_cfg.get("include_beacons", True)),
+                    snaplen=int(hs_cfg.get("snaplen", 0)),
+                )
+                handshake.start()
+                if handshake.available:
+                    st.hs_on = True
+                else:
+                    dialog.alert(self.p, self.pal, "HANDSHAKE",
+                                 f"Capture disabled:\n{handshake.last_error}",
+                                 accent=self.pal.amber)
+                    handshake = None
+            elif use_wifi:
+                dialog.alert(self.p, self.pal, "HANDSHAKE",
+                             "Needs monitor mode.\nRunning iw scan, so no\n"
+                             "handshake capture.",
+                             accent=self.pal.amber)
+
         def adjust_brightness(delta: int) -> None:
             mgr = idle.get()
             new = max(5, min(100, (mgr.brightness if mgr else 70) + delta))
@@ -311,6 +390,8 @@ class App:
                 st.gps_sats = live.sats
                 st.lat = live.lat
                 st.lon = live.lon
+                if handshake:
+                    st.hs_eapol = handshake.eapol
 
                 if st.paused:
                     # Keep draining or the queues grow without bound and the
@@ -387,6 +468,8 @@ class App:
                 wifi.stop()
             if ble:
                 ble.stop()
+            if handshake:
+                handshake.stop()
             # One last drain: the scanners were still emitting up to the
             # moment we tore them down.
             try:
@@ -404,10 +487,15 @@ class App:
 
         s = sess.stats
         held = f"\nno-fix skipped: {s.skipped_no_fix}" if s.skipped_no_fix else ""
+        hs_line = ""
+        if handshake:
+            hs_line = (f"\nHS: {handshake.eapol} eapol -> "
+                       f"{handshake.pcap_file.name}")
+        dest = "USB" if self.output_active == "usb" else "internal"
         dialog.alert(self.p, self.pal, "SAVED",
-                     f"Wrote {s.rows_written} rows\n"
+                     f"Wrote {s.rows_written} rows ({dest})\n"
                      f"WiFi: {s.wifi_total}  BLE: {s.ble_total}\n"
-                     f"File: {Path(s.files[-1]).name}{held}",
+                     f"File: {Path(s.files[-1]).name}{held}{hs_line}",
                      accent=self.pal.green)
 
     def _action_sync(self):
@@ -617,6 +705,8 @@ class App:
                 menu.MenuItem("TEST CONNECTION", action=lambda: self._cfg_test()),
                 menu.MenuItem("SCAN SETUP", action=lambda: self._cfg_scan(),
                               badge=str(scan_cfg.get("wifi_iface", "auto"))),
+                menu.MenuItem("OUTPUT DEVICE", action=lambda: self._cfg_output(),
+                              badge=self.output_active.upper()),
                 menu.MenuItem("GPS DEVICE", action=lambda: self._cfg_gps_device(),
                               badge=gps_current.replace("/dev/", "")),
                 menu.MenuItem("GPS BAUD", action=lambda: self._cfg_gps_baud(),
@@ -636,6 +726,45 @@ class App:
                 menu.MenuItem("BACK", action=lambda: "back"),
             ]
         menu.run(self.p, self.pal, "CONFIG", build_items)
+
+    # ---------------- output device ---------------- #
+
+    def _cfg_output(self):
+        """Choose where sessions and handshake pcaps are written — the pager's
+        internal eMMC, or a USB stick on the powered hub. USB partitions are
+        listed with size and current mount state; picking one mounts it (if the
+        firmware didn't) and writes loot straight to it from then on."""
+        def build():
+            store = self.cfg.get("storage", {})
+            target = store.get("output", "internal")
+            usb_dev = store.get("usb_device") or None
+            items = [
+                menu.MenuItem("INTERNAL (eMMC)",
+                              action=lambda: self._set_output("internal", None),
+                              badge="*" if target == "internal" else None),
+                menu.MenuItem("USB AUTO",
+                              action=lambda: self._set_output("usb", None),
+                              badge="*" if target == "usb" and not usb_dev else None),
+            ]
+            for part in usbdrive.list_usb_partitions():
+                mount_tag = "mounted" if part.is_mounted else f"{part.size_mb}M"
+                sel = target == "usb" and usb_dev == part.device
+                items.append(menu.MenuItem(
+                    part.name,
+                    action=lambda d=part.device: self._set_output("usb", d),
+                    badge=("* " + mount_tag) if sel else mount_tag))
+            items.append(menu.MenuItem("BACK", action=lambda: "back"))
+            return items
+        menu.run(self.p, self.pal, "OUTPUT DEVICE", build)
+
+    def _set_output(self, target: str, device: str | None):
+        store = self.cfg.setdefault("storage", {})
+        store["output"] = target
+        if target == "usb":
+            store["usb_device"] = device or ""
+        save_config(self.cfg)
+        self._resolve_output(interactive=True)
+        return "back"
 
     # ---------------- scan setup ---------------- #
 
@@ -662,6 +791,10 @@ class App:
                               badge=plan_name),
                 menu.MenuItem("MONITOR HOP", action=lambda: self._cfg_toggle("monitor_hop", True),
                               badge="on" if sc.get("monitor_hop", True) else "off"),
+                menu.MenuItem("HANDSHAKE CAP", action=lambda: self._cfg_hs_toggle("enabled", False),
+                              badge="on" if self.cfg.get("handshake", {}).get("enabled", False) else "off"),
+                menu.MenuItem("HS BEACONS", action=lambda: self._cfg_hs_toggle("include_beacons", True),
+                              badge="on" if self.cfg.get("handshake", {}).get("include_beacons", True) else "off"),
                 menu.MenuItem("MOVE FILTER +", action=lambda: self._cfg_scan_num("min_move_m", +10, 0, 300),
                               badge=f"{sc.get('min_move_m', 30)}m"),
                 menu.MenuItem("MOVE FILTER -", action=lambda: self._cfg_scan_num("min_move_m", -10, 0, 300),
@@ -719,6 +852,11 @@ class App:
     def _cfg_toggle(self, key: str, default: bool):
         sc = self.cfg.setdefault("scan", {})
         sc[key] = not bool(sc.get(key, default))
+        save_config(self.cfg)
+
+    def _cfg_hs_toggle(self, key: str, default: bool):
+        hs = self.cfg.setdefault("handshake", {})
+        hs[key] = not bool(hs.get(key, default))
         save_config(self.cfg)
 
     def _cfg_scan_num(self, key: str, delta: int, lo: int, hi: int):

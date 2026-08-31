@@ -34,6 +34,9 @@ class HudState:
     lat: float = 0.0
     lon: float = 0.0
     skipped_no_fix: int = 0
+    # passive handshake capture
+    hs_on: bool = False
+    hs_eapol: int = 0
     # misc
     rows_per_min: float = 0.0
     session_id: str = "----"
@@ -47,7 +50,8 @@ class HudState:
         return (self.wifi_rows, self.ble_rows, self.total_rows,
                 self.wifi_seen, self.ble_seen, self.gps_fix, self.gps_sats,
                 round(self.lat, 4), round(self.lon, 4), self.skipped_no_fix,
-                int(self.rows_per_min), self.paused, self.warn)
+                int(self.rows_per_min), self.paused, self.warn,
+                self.hs_on, self.hs_eapol)
 
 
 class HudResult:
@@ -58,6 +62,8 @@ class HudResult:
 def render(p, pal: Palette, st: HudState) -> None:
     clear_bg(p, pal)
     sub = st.session_id if not st.source else f"{st.session_id}  {st.source}"
+    if st.hs_on:
+        sub += f"  hs:{st.hs_eapol}"
     draw_header(p, pal, "LIVE SCAN", sub)
 
     grid_top = HEADER_H + 8

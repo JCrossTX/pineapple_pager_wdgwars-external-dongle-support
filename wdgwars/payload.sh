@@ -126,6 +126,11 @@ command -v bluetoothctl >/dev/null 2>&1 || SOFT_WARN="$SOFT_WARN bluetoothctl"
 command -v tcpdump >/dev/null 2>&1 || SOFT_WARN="$SOFT_WARN tcpdump-mini"
 [ -e /sys/module/cdc_acm ] || modprobe cdc_acm 2>/dev/null
 [ -e /sys/module/cdc_acm ] || SOFT_WARN="$SOFT_WARN kmod-usb-acm"
+# External Alfa AWUS036AXM (MT7921AU) and a hub-attached USB stick both need
+# their kernel modules loaded. Best-effort here so a fresh boot has them
+# without re-running bootstrap; the kmods themselves are installed by bootstrap.
+[ -e /sys/module/mt7921u ]     || modprobe mt7921u 2>/dev/null
+[ -e /sys/module/usb_storage ] || modprobe usb-storage 2>/dev/null
 if [ -n "$SOFT_WARN" ]; then
     LOG "yellow" "Optional deps missing:$SOFT_WARN"
     LOG "         Install with: opkg install$SOFT_WARN"
