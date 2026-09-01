@@ -155,7 +155,7 @@ def draw_status_bar(p, pal, title: str, states: dict,
     the value-icon asset names (``sound``/``bri``/``ghz``/``batt``); a missing or
     None value skips that indicator.
     """
-    from .theme import HEADER_H, FONT_TITLE, FONT_BODY, CHAR_W
+    from .theme import HEADER_H, FONT_TITLE, FONT_BODY, FONT_HINT, CHAR_W
 
     p.fill_rect(0, 0, p.width, HEADER_H, pal.bg_dim)
     p.hline(0, HEADER_H, p.width, pal.cyan)
@@ -199,8 +199,10 @@ def draw_status_bar(p, pal, title: str, states: dict,
 
     def blit_battery(name: str, pct) -> None:
         """Battery icon; on the no-bolt `batt_text` the level is drawn on it,
-        at the clock font size (FONT_BODY) so it nearly fills the battery — as
-        the stock firmware does."""
+        sized to the battery's *interior* so the digits nearly fill it without
+        touching the outline. pagerctl font scales are integer (1/2/3), so pick
+        the largest that fits: 1-2 char values get the big clock-size font, and
+        3-char values ("100", "95%") drop a step so they clear the walls."""
         nonlocal x
         ent = _load(p, name)
         if not ent:
@@ -216,10 +218,20 @@ def draw_status_bar(p, pal, title: str, states: dict,
             # 100 shows as "100"; one/two-digit levels get a trailing "%".
             v = int(pct)
             s = "100" if v >= 100 else f"{v}%"
-            tw = p.text_width(s, FONT_BODY)
-            tx = bx + max(0, (w - tw) // 2)
-            ty2 = by + (h - CHAR_H * FONT_BODY) // 2
-            p.draw_text(tx, ty2, s, pal.green, FONT_BODY)
+            # Interior clear area: ~3px left wall, ~5px right (wall + terminal
+            # nub), ~3px top/bottom. Leave a 1px safety margin inside that.
+            inner_x = bx + 3
+            inner_w = w - 3 - 5
+            inner_h = h - 3 - 3
+            scale = FONT_BODY
+            if (p.text_width(s, FONT_BODY) > inner_w
+                    or CHAR_H * FONT_BODY > inner_h):
+                scale = FONT_HINT
+            tw = p.text_width(s, scale)
+            th = CHAR_H * scale
+            tx = inner_x + max(0, (inner_w - tw) // 2)
+            ty2 = by + 3 + max(0, (inner_h - th) // 2)
+            p.draw_text(tx, ty2, s, pal.green, scale)
         x -= 6
 
     def put(key: str) -> None:
