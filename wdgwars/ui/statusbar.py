@@ -119,7 +119,14 @@ def status_states(fix_3d: bool, ifaces, usb_parts, handshake_enabled: bool
 # ── drawing ──────────────────────────────────────────────────────────────────
 
 def _load(p, name: str):
-    """Return (handle, w, h) for an icon, or None. Cached."""
+    """Return (handle, w, h) for an icon, or None. Cached.
+
+    Note: the firmware's pagerctl PNG decoder only handles 8-bit truecolour
+    RGB (PNG colour type 2, like ``assets/background.png``). Palette (type 3)
+    or RGBA (type 6) icons decode to scrambled pixels on-device, so every file
+    in ``assets/icons/`` is stored as RGB with any transparency flattened onto
+    the bar background (``bg_dim``). Keep new icons in that format.
+    """
     if name in _icon_cache:
         return _icon_cache[name]
     if name in _icon_missing:
