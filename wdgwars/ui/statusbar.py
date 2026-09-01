@@ -148,12 +148,10 @@ def draw_status_bar(p, pal, title: str, states: dict,
     the value-icon asset names (``sound``/``bri``/``ghz``/``batt``); a missing or
     None value skips that indicator.
     """
-    from .theme import HEADER_H, FONT_TITLE, FONT_BODY
+    from .theme import HEADER_H, FONT_TITLE, FONT_BODY, CHAR_W
 
     p.fill_rect(0, 0, p.width, HEADER_H, pal.bg_dim)
     p.hline(0, HEADER_H, p.width, pal.cyan)
-    if title:
-        p.draw_text(6, 7, title, pal.fg, FONT_TITLE)
 
     if clock is None:
         try:
@@ -238,3 +236,12 @@ def draw_status_bar(p, pal, title: str, states: dict,
 
     for key in reversed(ORDER):
         put(key)
+
+    # Title last, clipped to whatever space remains left of the indicators so a
+    # long screen title (e.g. "TEST CONNECTION") never overlaps the icons.
+    if title:
+        avail = (x - 6) - 6
+        max_chars = max(0, avail // (CHAR_W * FONT_TITLE))
+        shown = title[:max_chars]
+        if shown:
+            p.draw_text(6, 7, shown, pal.fg, FONT_TITLE)

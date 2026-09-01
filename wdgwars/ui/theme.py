@@ -84,8 +84,26 @@ def draw_panel(p, pal: Palette, x: int, y: int, w: int, h: int,
 HEADER_H = 28   # taller to fit FONT_TITLE=2
 FOOTER_H = 14
 
+# Optional global header renderer. When the app installs one (via
+# set_status_hook), every screen that draws a header gets the firmware-style
+# status bar instead of the plain title header — so the bar is constant across
+# the whole payload (splash excepted; it draws no header). The hook receives
+# (p, pal, title) and returns True if it rendered the header itself.
+_status_hook = None
+
+
+def set_status_hook(fn) -> None:
+    global _status_hook
+    _status_hook = fn
+
 
 def draw_header(p, pal: Palette, title: str, sub: str | None = None) -> None:
+    if _status_hook is not None:
+        try:
+            if _status_hook(p, pal, title):
+                return
+        except Exception:
+            pass
     p.fill_rect(0, 0, p.width, HEADER_H, pal.bg_dim)
     p.hline(0, HEADER_H, p.width, pal.cyan)
     p.draw_text(6, 6, "// WDGWARS", pal.cyan, FONT_HINT)

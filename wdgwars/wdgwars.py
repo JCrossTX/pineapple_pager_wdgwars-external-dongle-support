@@ -100,6 +100,17 @@ class App:
         self.loot_dir = self.internal_loot
         self._resolve_output()
 
+        # Install the global status bar so every screen's header renders it
+        # (splash draws no header, so it stays bare). Set after splash has run
+        # (App is constructed post-splash in main()).
+        theme.set_status_hook(self._draw_status_header)
+
+    def _draw_status_header(self, p, pal, title) -> bool:
+        """theme.draw_header hook: draw the firmware-style status bar on every
+        screen. Returns True so the default title header is skipped."""
+        statusbar.draw_status_bar(p, pal, title, self._status_states())
+        return True
+
     def _resolve_output(self, interactive: bool = False) -> None:
         """Point ``loot_dir`` at the configured output target.
 
@@ -276,8 +287,7 @@ class App:
                                            badge=str(len(peers))))
             items.append(menu.MenuItem("POWER OFF", action=lambda: self._action_exit()))
             return items
-        return menu.run(self.p, self.pal, "MAIN", build, on_back=lambda: None,
-                        status_provider=self._status_states)
+        return menu.run(self.p, self.pal, "MAIN", build, on_back=lambda: None)
 
     # Cache for the heavier status probes (iw dev, /proc scans). GPS fix and
     # the handshake toggle are cheap and read live every call.
@@ -569,7 +579,7 @@ class App:
                 if not asleep and (now - last_render) >= hud_interval:
                     sig = st.signature()
                     if sig != last_sig or (now - last_render) >= 2.0:
-                        hud.render(self.p, self.pal, st, status=self._status_states())
+                        hud.render(self.p, self.pal, st)
                         self.p.flip()
                         last_sig = sig
                     last_render = now

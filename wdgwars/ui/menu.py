@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Callable, Sequence
 
 from . import idle
-from . import statusbar
 from .theme import (
     Palette, clear_bg, draw_header, draw_footer,
     FONT_BODY, FONT_HINT, HEADER_H, FOOTER_H,
@@ -29,8 +28,7 @@ class MenuItem:
 
 def run(p, pal: Palette, title: str,
         items: Sequence[MenuItem] | Callable[[], Sequence[MenuItem]],
-        on_back: Callable[[], None] | None = None,
-        status_provider: Callable[[], dict] | None = None) -> object | None:
+        on_back: Callable[[], None] | None = None) -> object | None:
     """Draw the menu and run the input loop until BACK or an action returns
     a non-None result.
 
@@ -39,8 +37,8 @@ def run(p, pal: Palette, title: str,
     (e.g. current brightness %) so it refreshes between key presses without
     losing the user's row selection.
 
-    `status_provider`, if given, is called each render and its {name: bool}
-    result is drawn as the top status bar (GPS / EXT / USB / PCAP).
+    The top status bar (when the app has installed one via theme.set_status_hook)
+    is drawn by draw_header, so it appears here automatically.
     """
     sel = 0
     row_h = 26
@@ -56,16 +54,7 @@ def run(p, pal: Palette, title: str,
             sel = len(current) - 1
 
         clear_bg(p, pal)
-        # With a status provider this screen gets the firmware-style top bar
-        # (title left, GPS/EXT/USB/PCAP indicators + clock right); otherwise the
-        # plain header. Fall back to the header if the bar can't render.
-        if status_provider is not None:
-            try:
-                statusbar.draw_status_bar(p, pal, title, status_provider())
-            except Exception:
-                draw_header(p, pal, title)
-        else:
-            draw_header(p, pal, title)
+        draw_header(p, pal, title)
 
         # Page items so the selection always stays in view (long menus scroll).
         list_y = HEADER_H + 8

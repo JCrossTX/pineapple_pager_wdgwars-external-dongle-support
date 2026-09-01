@@ -59,19 +59,12 @@ class HudResult:
     END = "end"
 
 
-def render(p, pal: Palette, st: HudState, status: dict | None = None) -> None:
+def render(p, pal: Palette, st: HudState) -> None:
     clear_bg(p, pal)
-    if status is not None:
-        # Firmware-style status bar (GPS/EXT/USB/PCAP/sound/bright/GHz/battery +
-        # clock). The bar occupies only the header strip, so the 2x2 grid below
-        # is unchanged and all four panels stay fully visible — no scrolling.
-        from . import statusbar
-        statusbar.draw_status_bar(p, pal, "LIVE SCAN", status)
-    else:
-        sub = st.session_id if not st.source else f"{st.session_id}  {st.source}"
-        if st.hs_on:
-            sub += f"  hs:{st.hs_eapol}"
-        draw_header(p, pal, "LIVE SCAN", sub)
+    # draw_header renders the global status bar (installed by the app) when
+    # present; the bar occupies only the header strip so the 2x2 grid below
+    # stays fully visible — no scrolling.
+    draw_header(p, pal, "LIVE SCAN")
 
     grid_top = HEADER_H + 8
     grid_bottom = p.height - FOOTER_H - 4
