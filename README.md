@@ -141,15 +141,22 @@ wdgwars/
 
 Pulls the latest main, replaces the payload, and restores your config.json (API key) afterward:
 
-DEST=/mmc/root/payloads/user/reconnaissance/wdgwars; \
-cp "$DEST/config.json" /mmc/root/wdgwars-config.backup 2>/dev/null; \
-cd /mmc/root && rm -rf .wdgu && mkdir .wdgu && cd .wdgu && \
-wget -O s.tgz "https://codeload.github.com/JCrossTX/pineapple_pager_wdgwars-external-dongle-support/tar.gz/refs/heads/main" && \
-tar xzf s.tgz && \
-cp -r pineapple_pager_wdgwars-external-dongle-support-main/wdgwars/. "$DEST/" && \
-{ [ -f /mmc/root/wdgwars-config.backup ] && cp /mmc/root/wdgwars-config.backup "$DEST/config.json"; }; \
-find "$DEST" -name '*.sh' -exec sed -i 's/\r$//' {} \; ; \
-cd /mmc/root && rm -rf .wdgu && echo "UPDATED — API key preserved (backup: /mmc/root/wdgwars-config.backup)"
+sh -c '
+set -u
+REPO="JCrossTX/pineapple_pager_wdgwars-external-dongle-support"; BRANCH="main"
+DEST="/mmc/root/payloads/user/reconnaissance/wdgwars"
+WORK="/mmc/root/.wdgwars-update"; BACKUP="/mmc/root/wdgwars-config.backup"
+[ -f "$DEST/config.json" ] && cp "$DEST/config.json" "$BACKUP"
+rm -rf "$WORK"; mkdir -p "$WORK"; cd "$WORK" || exit 1
+wget -q -O src.tgz "https://codeload.github.com/$REPO/tar.gz/refs/heads/$BRANCH" || { echo "download failed"; exit 1; }
+tar xzf src.tgz || exit 1
+SRC=$(find . -type d -path "*/wdgwars/ui" | head -1 | sed "s:/ui$::")
+[ -f "$SRC/wdgwars.py" ] || { echo "source not found"; exit 1; }
+cp -r "$SRC/." "$DEST/"; [ -f "$BACKUP" ] && cp "$BACKUP" "$DEST/config.json"
+find "$DEST" -name "*.sh" -exec sed -i "s/\r$//" {} \; 2>/dev/null
+cd /mmc/root; rm -rf "$WORK"
+echo "updated OK; icons: $(ls "$DEST/assets/icons" | wc -l), import os: $(grep -c "^import os" "$DEST/wdgwars.py")"
+'
 
 What it does:
 
