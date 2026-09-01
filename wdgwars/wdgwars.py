@@ -19,7 +19,7 @@ sys.path.insert(0, str(_HERE))
 
 from pagerctl import Pager  # noqa: E402
 
-from ui import theme, splash, menu, dialog, status as hud, keyboard, idle  # noqa: E402
+from ui import theme, splash, menu, dialog, status as hud, keyboard, idle, statusbar  # noqa: E402
 from scanners.wifi import WifiScanner, DEFAULT_PLAN  # noqa: E402
 from scanners.monitor import MonitorScanner  # noqa: E402
 from scanners.handshake import HandshakeCapture  # noqa: E402
@@ -276,7 +276,56 @@ class App:
                                            badge=str(len(peers))))
             items.append(menu.MenuItem("POWER OFF", action=lambda: self._action_exit()))
             return items
-        return menu.run(self.p, self.pal, "MAIN", build, on_back=lambda: None)
+        return menu.run(self.p, self.pal, "MAIN", build, on_back=lambda: None,
+                        status_provider=self._status_states)
+
+    # Cache for the heavier status probes (iw dev, /proc scans). GPS fix and
+    # the handshake toggle are cheap and read live every call.
+    _STATUS_TTL_S = 3.0
+
+    def _status_states(self) -> dict:
+        """Live values for the firmware-style top status bar.
+
+        Cheap/live every call: GPS fix, PCAP toggle, brightness, band, sound.
+        Heavier probes (external adapter via `iw dev`, USB via /proc, battery via
+        sysfs) are cached for a few seconds so a rapid keypress doesn't spawn a
+        subprocess or re-scan on every redraw.
+        """
+        now = time.monotonic()
+        fix = False
+        try:
+            fix = self.gps.state.snapshot().fix_3d
+        except Exception:
+            pass
+        hs = bool(self.cfg.get("handshake", {}).get("enabled"))
+
+        mgr = idle.get()
+        bri = mgr.brightness if mgr else self.cfg.get("ui", {}).get("brightness", 70)
+        band = self.cfg.get("scan", {}).get("band_plan") or DEFAULT_PLAN
+        muted = bool(self.cfg.get("ui", {}).get("muted", False))
+
+        cache = getattr(self, "_status_cache", None)
+        if cache is None or (now - self._status_cache_t) > self._STATUS_TTL_S:
+            try:
+                ifaces = list_interfaces()
+            except Exception:
+                ifaces = []
+            try:
+                usb = usbdrive.list_usb_partitions()
+            except Exception:
+                usb = []
+            self._status_cache = (statusbar.external_adapter_present(ifaces),
+                                  bool(usb), _read_battery())
+            self._status_cache_t = now
+        ext, usb_present, (batt, batt_pct) = self._status_cache
+
+        return {
+            "GPS": fix, "EXT": ext, "USB": usb_present, "PCAP": hs,
+            "sound": statusbar.sound_asset(muted),
+            "bri": statusbar.brightness_asset(bri),
+            "ghz": statusbar.ghz_asset(band),
+            "batt": batt, "batt_pct": batt_pct,
+        }
 
     def _action_jump(self, peers):
         items = [
@@ -520,7 +569,7 @@ class App:
                 if not asleep and (now - last_render) >= hud_interval:
                     sig = st.signature()
                     if sig != last_sig or (now - last_render) >= 2.0:
-                        hud.render(self.p, self.pal, st)
+                        hud.render(self.p, self.pal, st, status=self._status_states())
                         self.p.flip()
                         last_sig = sig
                     last_render = now
@@ -1145,6 +1194,35 @@ class App:
                           "Quit WDGoWars Wardriver?"):
             return "exit"
         return None
+
+
+def _read_battery():
+    """Battery indicator from sysfs → ``(asset_name, pct)`` or ``(None, None)``.
+
+    The bolt frames appear only on external power: ``Full`` → ``batt_full``,
+    ``Charging`` → the level bolt frame. On battery (``Discharging`` / ``Not
+    charging``) there is no bolt — the plain ``batt_text`` battery with the level
+    drawn as a number. Off-device (no such node) returns ``(None, None)``.
+    """
+    import glob as _glob
+    for base in sorted(_glob.glob("/sys/class/power_supply/*")):
+        cap_p = os.path.join(base, "capacity")
+        if not os.path.exists(cap_p):
+            continue
+        try:
+            with open(cap_p) as fh:
+                pct = int(fh.read().strip())
+        except (OSError, ValueError):
+            continue
+        status = ""
+        try:
+            with open(os.path.join(base, "status")) as fh:
+                status = fh.read().strip().lower()
+        except OSError:
+            pass
+        return statusbar.battery_asset(
+            pct, charging=(status == "charging"), full=(status == "full")), pct
+    return None, None
 
 
 def _safe_mtime(path: Path) -> float:

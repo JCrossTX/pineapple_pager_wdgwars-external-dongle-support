@@ -22,6 +22,14 @@ hub, plus opt-in passive handshake capture.
   never strands earlier sessions on the other storage.
   `bootstrap.sh` installs `kmod-usb-storage`, `block-mount`, `kmod-fs-vfat`,
   `kmod-fs-exfat` and `dosfstools`.
+- **Firmware-style top status bar** (`ui/statusbar.py`) on the main menu and the
+  live-scan screen: screen title on the left, then indicators + clock on the
+  right, using the Pager's own icon bitmaps (`wdgwars/assets/icons/`). GPS /
+  EXT / USB / PCAP are gray when not ready and cyan (`#00FFE5`) when
+  connected/ready; sound, brightness and GHz-band show the live value; battery
+  shows the charge bitmap (bolt only on external power — on battery it draws the
+  exact % in green). All driven by real hardware/config state (3 s cache for the
+  heavier probes). The wardrive 2×2 stays fully visible under the bar.
 - **ERASE SYNCED** (main menu, right after SYNC NOW). Deletes the session CSVs
   that were successfully uploaded (carry a `.uploaded` marker) across internal
   and USB, after a confirmation; badge shows the count. Pending/errored sessions
