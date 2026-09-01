@@ -137,6 +137,36 @@ wdgwars/
 
 5. From the pager dashboard pick **Payloads → User → Reconnaissance → WDGoWars Wardriver**.
 
+## Update from previous version
+
+Pulls the latest main, replaces the payload, and restores your config.json (API key) afterward:
+
+DEST=/mmc/root/payloads/user/reconnaissance/wdgwars; \
+cp "$DEST/config.json" /mmc/root/wdgwars-config.backup 2>/dev/null; \
+cd /mmc/root && rm -rf .wdgu && mkdir .wdgu && cd .wdgu && \
+wget -O s.tgz "https://codeload.github.com/JCrossTX/pineapple_pager_wdgwars-external-dongle-support/tar.gz/refs/heads/main" && \
+tar xzf s.tgz && \
+cp -r pineapple_pager_wdgwars-external-dongle-support-main/wdgwars/. "$DEST/" && \
+{ [ -f /mmc/root/wdgwars-config.backup ] && cp /mmc/root/wdgwars-config.backup "$DEST/config.json"; }; \
+find "$DEST" -name '*.sh' -exec sed -i 's/\r$//' {} \; ; \
+cd /mmc/root && rm -rf .wdgu && echo "UPDATED — API key preserved (backup: /mmc/root/wdgwars-config.backup)"
+
+What it does:
+
+Backs up your config.json to /mmc/root/wdgwars-config.backup.
+Downloads main as a tarball and extracts it.
+Copies the new payload files over your install (cp -r …/wdgwars/. "$DEST/") — this leaves lib/ (pagerctl) untouched since it isn't in the repo.
+Restores your config.json so the API key/settings survive.
+Strips any CRLF from shell scripts and cleans up.
+
+Then relaunch the payload from the pager dashboard (Payloads → User → Reconnaissance → WDGoWars Wardriver) so the new code loads.
+
+Notes:
+
+New config keys (status bar, USB, handshake, etc.) fall back to code defaults automatically — restoring your old config.json won't break anything.
+If you ever need to roll back your settings, they're in /mmc/root/wdgwars-config.backup.
+Uses wget (busybox) — the same way bootstrap.sh already fetches over HTTPS, so it should work on the pager as-is.
+
 ## UI map
 
 ```
