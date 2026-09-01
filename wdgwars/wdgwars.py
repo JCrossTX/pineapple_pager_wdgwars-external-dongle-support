@@ -6,6 +6,7 @@ Boot sequence: load config -> init Pager -> splash -> main menu loop.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from collections import deque
