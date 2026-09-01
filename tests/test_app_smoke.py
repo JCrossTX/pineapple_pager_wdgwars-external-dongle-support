@@ -45,7 +45,7 @@ class TestModuleLoads(unittest.TestCase):
                      "_action_history", "_action_sessions", "_cfg_scan",
                      "_cfg_wifi_source", "_show_history_entry",
                      "_cfg_output", "_set_output", "_resolve_output",
-                     "_cfg_hs_toggle", "_action_erase_synced"):
+                     "_cfg_hs_toggle", "_action_erase_synced", "_status_states"):
             self.assertTrue(callable(getattr(app.App, name, None)), name)
 
     def test_band_presets_reference_real_bands(self):

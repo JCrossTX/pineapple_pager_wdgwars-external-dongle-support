@@ -36,6 +36,9 @@ def run(p, pal: Palette, title: str,
     pass a callable when an item's label/badge depends on mutable state
     (e.g. current brightness %) so it refreshes between key presses without
     losing the user's row selection.
+
+    The top status bar (when the app has installed one via theme.set_status_hook)
+    is drawn by draw_header, so it appears here automatically.
     """
     sel = 0
     row_h = 26
